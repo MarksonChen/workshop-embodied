@@ -23,3 +23,7 @@ MUJOCO_LOG.TXT
 # Reference PDFs (large; not tracked)
 ref/papers/
 runs/
+
+# Secrets — API keys for remote auth. NEVER commit. Only .env.example is tracked.
+.env
+rl/remote/.env
