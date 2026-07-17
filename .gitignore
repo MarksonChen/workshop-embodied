@@ -24,6 +24,7 @@ MUJOCO_LOG.TXT
 ref/papers/
 runs/
 
-# Secrets — API keys for remote auth. NEVER commit. Only .env.example is tracked.
+# Secrets — remote auth uses exported env vars (no .env). These stay ignored
+# defensively in case one is ever created locally.
 .env
 rl/remote/.env
