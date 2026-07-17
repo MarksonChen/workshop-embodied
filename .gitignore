@@ -1,0 +1,24 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.uv/
+
+# Downloaded weights & data (large; fetched from HuggingFace on demand)
+model_checkpoints/
+data/
+*.h5
+
+# Training artifacts
+highlvl_checkpoints/
+task_checkpoints/
+outputs/
+wandb/
+videos/
+*.mp4
+
+# MuJoCo
+MUJOCO_LOG.TXT
+
+# Reference PDFs (large; not tracked)
+ref/papers/

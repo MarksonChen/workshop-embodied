@@ -1,0 +1,32 @@
+[project]
+name = "embodied"
+version = "0.1.0"
+description = "Neuromechanical rodent control experiments on MIMIC-MJX"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "track-mjx",
+]
+
+[project.optional-dependencies]
+# Use cuda12. On WSL2 the cuda13 extra pulls a CUDA 13.3 runtime that segfaults
+# inside cuInit() against WSL's stub libcuda (NVIDIA/cuda-samples#433);
+# cuda12 avoids that code path. See rl/README.md.
+cuda12 = ["track-mjx[cuda12]"]
+cuda13 = ["track-mjx[cuda13]"]
+
+[tool.uv.sources]
+# track-mjx is vendored as a submodule under ref/repos, used editable.
+track-mjx = { path = "ref/repos/track-mjx", editable = true }
+# uv does NOT inherit `tool.uv.sources` from a dependency's own pyproject, so
+# track-mjx's git pins are mirrored here. These revs must stay in sync with
+# ref/repos/track-mjx/pyproject.toml.
+vnl-playground = { git = "https://github.com/talmolab/vnl-playground", rev = "1529ac42d952c41b9408f8bebbb25602f3881ad3" }
+playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rl"]

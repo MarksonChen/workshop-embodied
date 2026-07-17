@@ -1,0 +1,12 @@
+[submodule "ref/repos/DART"]
+	path = ref/repos/DART
+	url = https://github.com/zkf1997/DART
+[submodule "ref/repos/MotionStreamer"]
+	path = ref/repos/MotionStreamer
+	url = https://github.com/zju3dv/MotionStreamer
+[submodule "ref/repos/track-mjx"]
+	path = ref/repos/track-mjx
+	url = https://github.com/talmolab/track-mjx
+[submodule "ref/repos/stac-mjx"]
+	path = ref/repos/stac-mjx
+	url = https://github.com/talmolab/stac-mjx
