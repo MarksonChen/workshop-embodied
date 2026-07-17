@@ -22,3 +22,4 @@ MUJOCO_LOG.TXT
 
 # Reference PDFs (large; not tracked)
 ref/papers/
+runs/
