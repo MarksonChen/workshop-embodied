@@ -13,3 +13,15 @@
 [submodule "ref/repos/BrainPy"]
 	path = ref/repos/BrainPy
 	url = https://github.com/brainpy/BrainPy
+[submodule "ref/repos/LAPO"]
+	path = ref/repos/LAPO
+	url = https://github.com/schmidtdominik/LAPO.git
+[submodule "ref/repos/HILP"]
+	path = ref/repos/HILP
+	url = https://github.com/seohongpark/HILP.git
+[submodule "ref/repos/mtm"]
+	path = ref/repos/mtm
+	url = https://github.com/facebookresearch/mtm.git
+[submodule "ref/repos/tdmpc2"]
+	path = ref/repos/tdmpc2
+	url = https://github.com/nicklashansen/tdmpc2.git
