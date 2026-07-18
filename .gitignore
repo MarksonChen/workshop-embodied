@@ -20,8 +20,6 @@ videos/
 # MuJoCo
 MUJOCO_LOG.TXT
 
-# Reference PDFs (large; not tracked)
-ref/papers/
 runs/
 
 # Secrets — remote auth uses exported env vars (no .env). These stay ignored
