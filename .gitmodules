@@ -10,3 +10,6 @@
 [submodule "ref/repos/stac-mjx"]
 	path = ref/repos/stac-mjx
 	url = https://github.com/talmolab/stac-mjx
+[submodule "ref/repos/BrainPy"]
+	path = ref/repos/BrainPy
+	url = https://github.com/brainpy/BrainPy
