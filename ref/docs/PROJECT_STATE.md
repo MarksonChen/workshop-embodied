@@ -1,6 +1,6 @@
 # Embodied — Project State & Next Steps
 
-_Last updated: 2026-07-17_
+_Last updated: 2026-07-18_
 
 A working log of the neuromechanical rodent-control project: what it is, what's
 built, what's proven, what's uncertain, and what to do next. Written as a handoff
@@ -76,38 +76,60 @@ sync.
 | `train_joystick.py` | Frozen-decoder transfer training (RodentJoystick) | Works; converges (balance), see Section 4 |
 | `watch_health.py` | Parse training log → one health line per eval + collapse flags | Works |
 | `render_joystick.py` | Rebuild policy from checkpoint, roll out with pinned command, render + measure displacement | Works |
-| `rl/remote/` | One-shot H100 setup + train script and workflow doc | Ready (untested on a real instance) |
+| `rl/remote/` | One-shot H100 setup + train script and workflow doc | Tested on a real H100 SXM (2026-07-17); two fixes folded in (see Section 5, #7 + wandb no-tty) |
 
 ---
 
-## 4. Current status — the key result
+## 4. Current status — RESOLVED: stand-still local optimum, root-caused and fixed
 
-The transfer **works, and does not collapse**, but has **not yet produced a
-walking policy**. Evidence from the local run (RTX 3080), pinned forward command
-`vx=0.3 m/s`:
+_Updated 2026-07-18 after the remote H100 run._
 
-| step | episode_len | fallen | reward | fwd speed (measured) |
-| ---: | ---: | ---: | ---: | ---: |
-| 0 (random) | 223/1000 | 100% | 98 | 0.000 m/s |
-| 10.5 M | 905/1000 | 20% | 1389 | 0.009 m/s |
-| 21.0 M | (upright, stable) | — | — | 0.011 m/s |
+The plateau was a **stand-still local optimum**, not a benign curriculum — and a
+one-line reward fix (`tracking_sigma` 0.25 → 0.05) breaks it and produces a
+walker.
 
-**Interpretation:** the policy mastered **balance** (survival 223→905 steps, no
-collapse, reward 14×) but forward **locomotion has not emerged** — ~0.01 m/s vs a
-commanded 0.3. Confirmed two ways: the env's own eval metrics (`vx 0.005` at 10 M
-under real sampled commands) and pinned-command renders (displacement 0.022 m /
-0.029 m over 2.5 s at 10 M / 21 M).
+**Diagnosis (remote H100, default 3e8 config, stopped at ~100 M).** The baseline
+reproduced the plateau exactly: balance saturated by ~30 M (episode_len ~1000,
+fallen ~0 %) while forward speed stayed flat — `vx` 0.024 → 0.040 across 10
+evals from 10 M to 94 M, ~5.5× short of the ~0.22 commanded. Ten datapoints on a
+flat line settle the "curriculum vs optimum" question: it is an optimum.
 
-This is **20 M steps = ~7 % of the planned 3e8 run.** Two readings, unresolved:
+**Root cause (the reward formula).** `RodentJoystick._tracking_lin_vel_reward`
+(`vnl_playground/tasks/rodent/joystick.py:294`) is
+`weight * exp(-(v_cmd - v_actual)² / sigma)` — note the denominator is `sigma`,
+**not** `2·sigma²`. With `sigma=0.25` and mean command ~0.23, a **standing** rat
+collects `exp(-0.23²/0.25) ≈ 0.81` of the maximum tracking reward. Moving
+perfectly adds only the last 19 %, set against the −100 termination risk of
+falling — so standing is a strong attractor. The `alive` bonus (0.1 → ~100/ep of
+pure-survival reward) reinforces it.
 
-1. **Balance-first curriculum (benign):** locomotion often emerges only after
-   balance is solid; the paper's rat imitation needed ~0.65 B steps.
-2. **Stand-still local optimum (needs a reward fix):** the reward is asymmetric —
-   `termination -100` dwarfs `alive +0.1` / `stand_still -0.5`, so "stand still,
-   don't risk falling" may be a strong attractor.
+**Fix + result (`tracking_sigma=0.05`, 50 M run).** Sharpening the peak drops the
+standing payoff to `exp(-0.23²/0.05) ≈ 0.35`. Locomotion emerges:
 
-Two datapoints can't distinguish these. The fast remote run (Section 6) is the
-cheapest way to find out.
+| metric | baseline (sigma 0.25) | fixed (sigma 0.05) |
+| --- | --- | --- |
+| eval `vx` (random cmds) | 0.024 → 0.040 (flat, to 94 M) | 0.001 → 0.048 → 0.085 → **0.097** (climbing, by 52 M) |
+| pinned `vx=0.3` render | 0.02–0.03 m / ~0.01 m/s | **0.510 m / 0.204 m/s** (68 % of command) |
+
+That's a ~20× improvement in a straight-line walk, at 52 M steps (~$2.6). The
+eval average (0.097) understates it because it mixes in zero/low/turning
+commands; on a clean "go straight" command the policy does 0.204 m/s.
+
+**Caveat / open question:** the `vx` climb was still flattening at 52 M
+(slope +.047, +.037, +.012 over successive 13 M intervals), so sigma-alone may
+converge somewhere around 0.10–0.15 eval-avg rather than the full command. A
+longer run and/or the complementary levers (raise `tracking_lin_vel.weight`, cut
+`alive.weight`) are the way to close the rest of the gap — see Section 6.
+
+**Artifacts (gitignored).** Baseline run `RodentJoystick-highlvl-20260717-224040`
+(ckpts 0…94 M); fixed run `RodentJoystick-highlvl-20260718-012844` (ckpts
+13/26/39/52 M) + `joystick_52428800.mp4`. wandb project `embodied-joystick`
+(`markson-team`): baseline `...224040`, fixed `...012844`, render `7q8gcqjz`.
+
+Note: `tracking_sigma` tightening was **counterintuitive at first** — the 13 M
+eval dipped to `vx≈0.001` (sharper peak → less gradient for a novice policy → it
+nails balance first), then climbed hard from 26 M on. Don't kill a sigma run at
+the first eval.
 
 ---
 
@@ -135,6 +157,14 @@ All are applied in our code and documented in `rl/README.md`:
    (not full `cfg`); no `render` module in the pinned commit; `TrackMjxObsWrapper.unwrapped`
    returns `self` (reach the inner env via `.env`); ghost cameras are suffixed
    (`close_profile-rodent` / `-ghost`).
+7. **Remote box `LD_LIBRARY_PATH` shadows the venv CUDA libs.** Some rental GPU
+   images preset `LD_LIBRARY_PATH=/usr/local/cuda/lib64`, whose system cuSPARSE
+   (e.g. 12.5.8.93) is older than what jaxlib 0.10.2 expects and shadows the pip
+   `nvidia-cusparse-cu12` (12.5.10.65) wheel in the venv → JAX raises "Unable to
+   load cuSPARSE" and **silently falls back to CPU** (training "runs" but ~100×
+   slower). Fix: `unset LD_LIBRARY_PATH` so JAX auto-locates the venv wheels; now
+   done automatically at the top of `setup_and_train.sh`. Verify with
+   `jax.devices()` → must print `CudaDevice`, not `CpuDevice`.
 
 ### Operational
 - **Local compile is RAM-bound.** The 3080 box (15 GB RAM, ~4 GB free) took
@@ -143,6 +173,11 @@ All are applied in our code and documented in `rl/README.md`:
 - **stdout is block-buffered when redirected;** eval metrics lag behind the
   flushed checkpoint prints. `train_joystick.py` now sets `PYTHONUNBUFFERED=1`
   (applies to new runs).
+- **wandb online in a no-tty shell needs the key in the *env*, not just
+  `~/.netrc`.** `wandb.init` raised `UsageError: api_key not configured (no-tty)`
+  even with a valid `machine api.wandb.ai` netrc entry present. `WANDB_API_KEY`
+  in the environment is always honored. `setup_and_train.sh` now hoists the key
+  from `~/.netrc` into `WANDB_API_KEY` when it isn't already exported.
 - **Memory is not the constraint:** 4096 envs used ~5 GB of 10 GB on the 3080.
 
 ### brax logs only eval metrics
@@ -154,37 +189,48 @@ falling, reward not crashing from peak, no NaN termination.
 
 ## 6. Next steps
 
-### Immediate: remote H100 run to answer "curriculum or local optimum?"
-Recommended: **H100 SXM 80 GB** (~$2.99/hr; a ~15-min run ≈ $0.75). Setup is
-turnkey in `rl/remote/` (see its README). Flow:
+### Done: diagnosis (see Section 4). The immediate question is answered.
+The remote H100 run confirmed the stand-still optimum and `tracking_sigma=0.05`
+produced a walker (0.204 m/s pinned). **Timing reality check:** at ~20k sps on
+one H100 SXM, 10 M steps ≈ 10 min wall-clock, so **3e8 ≈ 5 hours ≈ ~$15**, not
+the ~15 min this doc originally estimated. Budget accordingly; 5e7 (~50 min,
+~$2.6) is enough to see a reward change take effect. Launch a tuned run directly:
 
-1. `git bundle create /tmp/embodied.bundle --all` → scp to instance → clone +
-   `git submodule update --init ref/repos/track-mjx`.
-2. `bash rl/remote/setup_and_train.sh` (uv sync cuda12, download 158 MB decoder,
-   train `num_envs 8192 batch 2048 3e8`, checkpoint every 10 M).
-3. `uv run python rl/watch_health.py rl/runs/train.log` in another shell.
-4. Bring the final checkpoint back; render locally with `render_joystick.py`.
+```
+export WANDB_API_KEY=...            # or rely on ~/.netrc; see remote/ notes
+env -u LD_LIBRARY_PATH WANDB_MODE=online uv run python rl/train_joystick.py \
+  --num_envs 8192 --batch_size 2048 --num_timesteps 5e7 --eval_every 10000000 \
+  --env "reward_config.tracking_sigma=0.05" 2>&1 | tee rl/runs/train_sigma05.log
+```
+(`env -u LD_LIBRARY_PATH` + `WANDB_MODE=online` are the two shims from Section 5
+when NOT going through `setup_and_train.sh`.)
 
-**Read the `vx` trend across evals:**
-- Forward speed climbs toward the command → curriculum; let it finish, we have a
-  walker.
-- Still ~0.01 m/s at 3e8 → stand-still optimum; tune rewards (below) and rerun
-  (~15 min each).
+### Next: close the remaining speed gap (eval-avg 0.097 → commanded ~0.22)
+The sigma-0.05 `vx` climb was still flattening at 52 M, so it may not reach full
+command on its own. In rough priority, and now that we know standing is the
+attractor:
+- **Train longer** at `sigma=0.05` (e.g. `--num_timesteps 2e8`, ~3 h, ~$10) —
+  simplest; see if it keeps climbing past ~0.1. No resume is wired, so this
+  restarts from scratch.
+- **Cut `reward_terms.alive.weight`** (0.1 → 0.0): removes ~100/ep of
+  pure-survival reward that rewards standing regardless of tracking shape.
+- **Raise `reward_terms.tracking_lin_vel.weight`** (1.0 → 2–3): amplify the
+  moving-vs-standing gap in absolute terms.
+- A combined `"reward_config.tracking_sigma=0.05 reward_terms.alive.weight=0.0
+  reward_terms.tracking_lin_vel.weight=3.0"` is the strongest single shot at a
+  full-speed walker (at the cost of clean attribution).
+Change one axis at a time if attribution matters; `--env` takes several
+space-separated dotted overrides at once if it doesn't.
 
-### If locomotion doesn't emerge: reward tuning (one-line `--env` overrides)
-Candidates, in rough priority:
-- Raise `reward_terms.tracking_lin_vel.weight` (default 1.0).
-- Cut `reward_terms.alive.weight` (default 0.1) — less pure-survival incentive.
-- Soften `reward_terms.termination.weight` (default -100) — reduce fall-fear.
-- Possibly lower `command_config.zero_prob` (default 0.1) so the policy is asked
-  to move more often.
-Change one axis at a time; the H100 makes each test ~15 min.
-
-### A→B closed-loop control (once a walker exists)
+### A→B closed-loop control (now unblocked — a straight-line walker exists)
 The joystick policy tracks `[vx, vyaw]`. For A→B, at inference replace the random
 command sampler with a controller that points `vyaw` at the target bearing and
 sets `vx`, stopping on arrival. Extend `render_joystick.py` (which already pins a
-constant command) with a target-seeking command function.
+constant command) with a target-seeking command function. **Caveat:** the
+sigma-0.05 checkpoint is validated only for straight-line `vx` (0.204 m/s pinned);
+**turning quality (`vyaw` tracking) is untested** — the eval average mixes in
+turns and was lower, so verify a `vyaw`-pinned render before trusting closed-loop
+steering, or fold `vyaw` into the next training run's success criteria.
 
 ### SNN arm (longer horizon)
 For SNN-vs-MC/DLS comparison, the SNN must replace the **decoder** (the layer
