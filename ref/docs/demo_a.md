@@ -1,0 +1,78 @@
+# Demo A — RL-only from-scratch walker (plan)
+
+_Created 2026-07-18. Companion to [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) (thesis) and
+[PROJECT_STATE.md](PROJECT_STATE.md) (assets)._
+
+**Status: not started — buildable now, needs no dataset.**
+
+---
+
+## 1. Role in the thesis
+
+Demo A is the **RL-only** corner of the 2×2 (WORKSHOP_PLAN §2): **functional realism,
+~zero distributional realism.** It must be a *competent-but-unnatural* walker — moves
+forward fine, but its gait and internal representation don't match the real rat.
+
+It is the **true no-prior baseline** — explicitly **not** our existing joystick walker,
+which rides the imitation-pretrained NPMP decoder, already carries a data prior, and
+therefore sits near the *both* corner (see §5).
+
+## 2. The one risk that governs the whole design
+
+From-scratch RL on a 38-DoF torque-actuated body can **flail** instead of walking. A
+flailing Demo A conflates "RL can't control 38 DoF" (a compute artifact) with "RL isn't
+distributionally real" (the actual point). So the plan is built around making it
+**competent-but-ugly, cheaply**, and *not* rewarding naturalness — the ugliness must be
+emergent, not imposed.
+
+## 3. Stack
+
+- Same MJX rodent body + brax PPO as `rl/`, but with the **decoder removed**: the policy
+  outputs **raw torques (38-dim action)** from proprioception. This is `RodentJoystick`
+  *without* the `HighLevelWrapper`/decoder — a direct torque-control locomotion task.
+  **Verify** whether vnl-playground ships such an env or whether we wrap the raw body.
+- Reuse `rl/` tooling: the `train_joystick`-style launcher, `watch_health.py`,
+  `render_joystick.py`, and the `LD_LIBRARY_PATH` + wandb fixes (PROJECT_STATE §5).
+
+## 4. Staged build
+
+### Stage 0 — de-risk (before spending real GPU)
+Short smoke run with a **well-shaped locomotion reward**:
+- forward-velocity tracking + alive + upright/orientation + energy/torque penalty +
+  **action-rate smoothness** (the term that most reliably turns flailing into a gait).
+- Confirm a *stable* gait emerges cheaply. If it flails: add a **curriculum** (ramp
+  commanded speed, forgiving termination) or adopt a proven MuJoCo-Playground
+  quadruped/locomotion reward before committing.
+
+### Stage 1 — train
+Train to a competent-but-ugly walker. Budget **~100–300 M steps** (raw-torque-from-scratch
+is harder than the decoder-based joystick, which needed ~50 M) → real H100 time.
+Checkpoint + monitor as in PROJECT_STATE.
+
+### Stage 2 — score on the shared axes (WORKSHOP_PLAN §4)
+- **Functional:** commanded-velocity tracking in MJX — should score **well**.
+- **Kinematic-distributional:** gait statistics (stride frequency, duty factor,
+  joint-angle ranges, inter-joint correlations) vs the real-rat mocap distribution —
+  should score **poorly** (the point). Reuse `demo_b/foot_metrics.py` + a small gait-stats
+  module over the Aldarondo `qpos`. Mind the data gotchas ([dataset.md](dataset.md)):
+  **merge locomotion bouts** (raw runs are shredded by label flicker) and **finite-diff
+  `qvel`**.
+- **Neural (Phase 2):** MIMIC Poisson-GLM + RSA of its activations vs DLS/MC — should
+  out-predict raw kinematics **least** of the three demos.
+
+## 5. The minimum-viable thesis demo (do this first)
+
+**Demo A + our existing joystick walker** is *already* a clean two-point demonstration of
+the thesis, buildable now with no dataset dependency:
+- raw-torque RL (no prior) → moves, but gait/representation wrong;
+- decoder prior + PPO → moves **and** looks real.
+
+Treat this pair as the MVP; the SSL-WAM ([demo_c.md](demo_c.md)) is the principled upgrade
+of the "data prior."
+
+## 6. Open questions
+- Does vnl-playground ship a torque-control rodent locomotion env, or do we wrap the raw
+  body? (verify before Stage 0)
+- How unnatural is the emergent gait, quantitatively, vs real? *That number is the demo.*
+- The neural axis is blocked until the DLS/MC comparison pipeline exists (shared with
+  [demo_c.md](demo_c.md) and the story-map "Arc 01").
