@@ -43,10 +43,17 @@ the SSL / brain–body half of the thesis.
   continuous** latent matching the decoder's intention space.
 - **Loss:** single-step state reconstruction
   `‖ MJX_step(decoder(g(s_t, s_{t+1}), proprio_t)) − s_{t+1} ‖` (+ smoothness / consistency).
-- **#1 technical risk + fallback:** differentiating through contact-rich MJX is stiff. Use
-  **single-step** supervision (tractable); if gradients misbehave, fall back to a
-  **learned-FDM proxy** (literal LAPO) or a **distilled decoder**, then fine-tune. Prototype
-  this before the full build (§7).
+- **#1 technical risk — RESOLVED (2026-07-18 gradient-path spike).** `jax.grad`
+  (reverse-mode) **cannot** backprop through MJX's constraint solver — it uses a
+  dynamic-length `lax.while_loop` (`mujoco/mjx/_src/solver.py`), which reverse-mode rejects.
+  **Fix: forward-mode autodiff (`jax.jacfwd`)** — it differentiates through `while_loop`, and
+  the intention is only 16-D, so it costs ~16 JVPs. Verified on the H100: single-transition
+  inversion converges (loss ↓ **11,000×** over 400 Adam steps, finite grads). **Training
+  recipe: mixed-mode autodiff** — forward-mode through the 16-D-bottlenecked `MJX ∘ decoder`
+  chunk, reverse-mode through the IDM network. Keeps *exact* MJX; the learned-FDM /
+  distilled-decoder fallbacks are only needed if forward-mode proves too slow at scale.
+  (Spike used single-step, small-displacement targets — next validate on real multi-step
+  mocap transitions.)
 - **Optional shaping (stack-native):** **HILP** ([ref/repos/HILP](../repos/HILP), JAX/Flax)
   to give the intention a temporal-distance / directional structure — a smoother,
   goal-directed manifold.
@@ -90,8 +97,9 @@ Blueprints without public code (design references only): Radosavovic *humanoid l
 next-token prediction* (action-masking of mocap is exactly our regime) and RPT.
 
 ## 7. Build order
-0. **Prototype** the JAX intention-IDM on a few merged mocap bouts — test the
-   differentiable-MJX gradient path (the make-or-break risk) before anything else.
+0. ~~Prototype the differentiable-MJX gradient path~~ **DONE (2026-07-18)** — forward-mode
+   (`jacfwd`) works; see §3. **Next:** validate on **real mocap transitions** (bigger
+   displacements than the single-step spike) + build the amortized IDM.
 1. Full Stage-1 intention-IDM on the merged locomotion bouts. Data gotchas
    ([dataset.md](dataset.md)): **merge bouts** (label flicker shreds raw runs), **finite-diff
    `qvel`**, and pick one **Aldarondo ↔ MIMIC-MJX `qpos` convention**.

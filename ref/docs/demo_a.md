@@ -28,9 +28,11 @@ emergent, not imposed.
 ## 3. Stack
 
 - Same MJX rodent body + brax PPO as `rl/`, but with the **decoder removed**: the policy
-  outputs **raw torques (38-dim action)** from proprioception. This is `RodentJoystick`
-  *without* the `HighLevelWrapper`/decoder — a direct torque-control locomotion task.
-  **Verify** whether vnl-playground ships such an env or whether we wrap the raw body.
+  outputs **raw torques (38-dim action)** from proprioception. **Env:
+  `RodentMaintainVelocity`** (registered in vnl_playground; `torque_actuators=True`, a
+  forward-velocity reward, and *no upright reward* — so it must learn to stay up) — trained
+  directly via track-mjx `scripts/train_task.py` (**not** `train_highlvl.py`, which wraps the
+  decoder). No new env to build.
 - Reuse `rl/` tooling: the `train_joystick`-style launcher, `watch_health.py`,
   `render_joystick.py`, and the `LD_LIBRARY_PATH` + wandb fixes (PROJECT_STATE §5).
 
@@ -71,8 +73,8 @@ Treat this pair as the MVP; the SSL-WAM ([demo_c.md](demo_c.md)) is the principl
 of the "data prior."
 
 ## 6. Open questions
-- Does vnl-playground ship a torque-control rodent locomotion env, or do we wrap the raw
-  body? (verify before Stage 0)
+- ~~Torque-control env?~~ **Resolved: `RodentMaintainVelocity`** (raw torque,
+  forward-velocity reward, no upright reward) via `scripts/train_task.py`.
 - How unnatural is the emergent gait, quantitatively, vs real? *That number is the demo.*
 - The neural axis is blocked until the DLS/MC comparison pipeline exists (shared with
   [demo_c.md](demo_c.md) and the story-map "Arc 01").
