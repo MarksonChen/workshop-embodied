@@ -8,6 +8,8 @@ __pycache__/
 model_checkpoints/
 data/
 *.h5
+# Trained motor checkpoints — regenerated via make_assets.py / training; repo policy: weights not committed
+*.pt
 
 # Training artifacts
 highlvl_checkpoints/
@@ -29,6 +31,7 @@ rl/remote/.env
 
 # Demo B run artifacts (models/videos/logs)
 demo_b/out/
+demo_b_archive/out/
 
 # Demo A run artifacts
 demo_a/runs/
