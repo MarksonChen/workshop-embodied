@@ -35,10 +35,20 @@ from brax.training.agents.ppo import networks as ppo_networks
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as vnl_wrappers
 
+import sys as _sys
 
-def build_env(task: str):
-    """Mirror scripts/train_task.create_environments (no decoder)."""
+_SCRIPTS = Path(__file__).resolve().parent.parent / "ref" / "repos" / "track-mjx" / "scripts"
+_sys.path.insert(0, str(_SCRIPTS))
+from utils import apply_env_overrides, parse_env_overrides_str
+
+
+def build_env(task: str, env_overrides: str | None = None):
+    """Mirror scripts/train_task.create_environments (no decoder). env_overrides
+    (e.g. "noslip_iterations=5 torque_actuators=False") MUST match the trained
+    checkpoint's config or the model/actuators won't line up."""
     env_cfg = registry.get_default_config(task)
+    if env_overrides:
+        apply_env_overrides(env_cfg, parse_env_overrides_str(env_overrides))
     env = vnl_wrappers.BraxObsWrapper(
         registry.load(task, config=env_cfg, clips=None, flatten_obs=False)
     )
@@ -56,9 +66,12 @@ def main():
     ap.add_argument("--wandb-project", default=None,
                     help="If set, upload the video + stats to this wandb project")
     ap.add_argument("--wandb-run", default=None)
+    ap.add_argument("--env", default=None,
+                    help='Env overrides matching the checkpoint, e.g. '
+                         '"noslip_iterations=5 torque_actuators=False reward_config.tracking_sigma=0.1"')
     args = ap.parse_args()
 
-    env, env_cfg = build_env(args.task)
+    env, env_cfg = build_env(args.task, args.env)
     inner = env.env  # task env (owns mj_model)
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)

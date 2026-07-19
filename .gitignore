@@ -36,3 +36,5 @@ demo_a/out/
 
 # Go1/rodent-quadruped run artifacts
 demo_a/runs_go1/
+demo_a_archive/runs_go1/
+demo_a_archive/out/
