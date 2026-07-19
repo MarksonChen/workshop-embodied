@@ -62,7 +62,16 @@ def main():
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--num_timesteps", type=float, default=None)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--model", default=None,
+                    help="Self-contained XML to inject into the Go1 env (e.g. the "
+                         "rodent model demo_a/models/rodent_go1.xml). Keeps Go1 physics.")
     args = ap.parse_args()
+
+    if args.model:
+        from mujoco_playground._src.locomotion.go1 import go1_constants as _C
+        _xml = Path(args.model).resolve()
+        _C.task_to_xml = lambda task: _xml  # inject custom model (same 12-DoF skeleton)
+        print(f"injecting model: {_xml}", flush=True)
 
     env = registry.load(ENV)
     ppo_params = locomotion_params.brax_ppo_config(ENV)

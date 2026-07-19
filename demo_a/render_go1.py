@@ -43,7 +43,13 @@ ENV = "Go1JoystickFlatTerrain"
 def main():
     ckpt = sys.argv[1] if len(sys.argv) > 1 else sorted(glob.glob("demo_a/runs_go1/*.pkl"))[-1]
     steps = int(sys.argv[2]) if len(sys.argv) > 2 else 500
+    model = sys.argv[3] if len(sys.argv) > 3 else None
     print(f"ckpt: {ckpt}")
+    if model:
+        from mujoco_playground._src.locomotion.go1 import go1_constants as _C
+        _xml = Path(model).resolve()
+        _C.task_to_xml = lambda task: _xml  # render on the same injected model
+        print(f"model: {_xml}")
 
     env = registry.load(ENV)
     pp = locomotion_params.brax_ppo_config(ENV)

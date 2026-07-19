@@ -33,3 +33,6 @@ demo_b/out/
 # Demo A run artifacts
 demo_a/runs/
 demo_a/out/
+
+# Go1/rodent-quadruped run artifacts
+demo_a/runs_go1/
