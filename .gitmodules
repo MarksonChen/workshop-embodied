@@ -25,3 +25,6 @@
 [submodule "ref/repos/tdmpc2"]
 	path = ref/repos/tdmpc2
 	url = https://github.com/nicklashansen/tdmpc2.git
+[submodule "ref/repos/autoresearch"]
+	path = ref/repos/autoresearch
+	url = https://github.com/karpathy/autoresearch.git
