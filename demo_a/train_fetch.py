@@ -93,24 +93,42 @@ def main():
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--num_timesteps", type=float, default=5e7)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--save_deciles", action="store_true",
+                    help="snapshot params at each of 11 evals (0,10,...,100%% of training) "
+                         "into out/deciles/ -- for watching the gait evolve over training")
     args = ap.parse_args()
 
     n = 2_000_000 if args.smoke else int(args.num_timesteps)
     n_envs = 512 if args.smoke else 2048
+    n_evals = 11 if args.save_deciles else (2 if args.smoke else 10)
     print(f"jax devices: {jax.devices()}")
     env = FetchV2()
-    print(f"FetchV2 | obs {env.observation_size} | act {env.action_size} | steps {n:.0e}")
+    print(f"FetchV2 | obs {env.observation_size} | act {env.action_size} | steps {n:.0e} "
+          f"| evals {n_evals}")
 
     t0 = time.time()
+    dec_dir = OUT / "deciles"
+
+    def save_ckpt(step, make_policy, params):
+        """policy_params_fn hook -- pickle the (normalizer, policy, value) tuple per eval."""
+        if not args.save_deciles:
+            return
+        dec_dir.mkdir(parents=True, exist_ok=True)
+        pct = round(100 * int(step) / n)
+        with open(dec_dir / f"fetch_{pct:03d}pct_{int(step):010d}.pkl", "wb") as f:
+            pickle.dump(params, f)
+        print(f"       [ckpt] saved {pct}% @ step {int(step):,}", flush=True)
 
     def progress(step, metrics):
         r = float(metrics.get("eval/episode_reward", float("nan")))
-        print(f"[{time.time()-t0:5.0f}s] step {int(step):>10,} | reward {r:9.2f}", flush=True)
+        pct = 100 * int(step) / n
+        print(f"[{time.time()-t0:5.0f}s] {pct:5.1f}% step {int(step):>11,} | reward {r:9.2f}",
+              flush=True)
 
     make_inference_fn, params, _ = ppo.train(
         environment=env,
         num_timesteps=n,
-        num_evals=2 if args.smoke else 10,
+        num_evals=n_evals,
         episode_length=1000,
         num_envs=n_envs,
         batch_size=256,
@@ -126,6 +144,7 @@ def main():
         network_factory=ppo_networks.make_ppo_networks,
         wrap_env_fn=wrap_fetch_for_training,
         progress_fn=progress,
+        policy_params_fn=save_ckpt,
     )
     OUT.mkdir(parents=True, exist_ok=True)
     out = OUT / f"fetch_{datetime.now().strftime('%Y%m%d-%H%M%S')}.pkl"
