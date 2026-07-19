@@ -22,6 +22,7 @@ reinforcement learning (RL).** The two objectives constrain *different* things:
 **SSL + RL = brain–body–environment.**
 
 ### The sharpened claim (defend this version)
+
 The ML literature shows predictive (SSL) pretraining mainly buys *sample-efficiency
 and better representations* — from-scratch RL can eventually match final **task**
 performance given enough simulator rollouts. So on the **functional** axis, SSL is a
@@ -67,6 +68,7 @@ thesis. Three archetypes, one shared pair of axes (Section 4).
 > comparison is legible.
 
 ### Demo A — RL-only (functional, not distributional)
+
 - **What:** train the rodent body to locomote with **pure RL reward** (velocity +
   alive), **from scratch, on raw torque control — WITHOUT the pretrained decoder.**
 - **Note:** our existing joystick walker is **not** this — it rides an
@@ -81,6 +83,7 @@ thesis. Three archetypes, one shared pair of axes (Section 4).
 - **Feasibility:** buildable **now** (rodent model + MJX + brax PPO; no dataset).
 
 ### Demo B — SSL-only (distributional, not functional)
+
 - **What:** a **generative motion model over rodent kinematics** (no physics).
   Options, cheapest first:
   1. a light autoregressive / VAE model on the mocap joint-angle sequences;
@@ -96,15 +99,19 @@ thesis. Three archetypes, one shared pair of axes (Section 4).
 - **Feasibility:** needs the **mocap clips** (Section 6). Medium.
 
 ### Demo C — WAM + RL (both) — the synthesis
-Two stages (concrete recipe in Section 5):
-- **Stage 1 (the "WAM"):** SSL **masked-trajectory prediction of future
-  proprioceptive state + intention** from mocap clips — a joint forward+inverse
-  model.
-- **Stage 2 (RL):** **brax PPO** fine-tunes the pretrained representation for a
-  locomotion task; policy outputs **intention** → frozen decoder → torques → **MJX**.
-- **Teaching point:** functional **and** distributional. Compare against Demo A
-  (same task, no pretraining) to show the synergy.
-- **Feasibility:** needs mocap clips (stage 1) + physics (stage 2, have it). Hardest.
+
+The canonical recipe is now [demo_c.md](demo_c.md):
+- **World factor (SSL):** learn the action-conditioned next-state map
+  `W(x_t, a_t) → x_{t+1}` from Demo A rollouts. The target is created by shifting a
+  trajectory by one step.
+- **Action factor (RL):** use the frozen world factor as a short-horizon learned
+  simulator and PPO-post-train an early Demo A checkpoint inside it.
+- **Reality check:** deploy the frozen post-trained policy back in the real Brax
+  environment and expose the dream-to-real gap.
+- **Teaching point:** SSL learns *what happens if I do this?*; RL learns *what should I
+  do?* The core demo teaches how the objectives combine. A later real-rat-data extension
+  is still required for the stronger distributional-realism claim.
+- **Feasibility:** buildable now from the completed Demo A assets; no mocap dependency.
 
 ---
 
@@ -126,91 +133,80 @@ Two stages (concrete recipe in Section 5):
 
 ## 5. The WAM + RL recipe (concrete)
 
-Grounded in the locomotion-proven predictive-pretraining lineage, **not** the
-video-world-model/manipulation lineage of the cited survey (see Section 7).
+[demo_c.md](demo_c.md) supersedes the former MTM/intention-IDM recipe. Its minimal
+factorization follows WorldModel.pdf §3.1:
 
-**Stage 1 — masked-trajectory model (MTM-style), over `[state, intention]` tokens.**
-- Predict **future proprioceptive state + intention** — **not raw torques.** The
-  frozen decoder already maps (intention, proprioception) → torques, so the useful,
-  low-dimensional, controllable variable to model is the **16-D intention** (exactly
-  what the downstream PPO policy will output).
-- **Objective:** masked-trajectory reconstruction with a random-autoregressive mask
-  (MTM, arXiv:2305.02968), preferred over pure next-step because (a) it natively
-  handles **action-free mocap** — our clips have states but no intention labels, so
-  mask the missing modality; (b) one net then serves as forward-model, inverse-model,
-  and encoder; (c) MTM's own results show the learned reps **accelerate downstream RL
-  on Walker locomotion**. Simpler intuitive alternative: modality-aligned next-token
-  prediction (Radosavovic, arXiv:2402.19469), also locomotion-proven.
-- Where intention labels are missing in raw mocap: either infer them via the frozen
-  decoder's encoder, or treat intention as a masked/latent token to be predicted.
+```text
+p(x_{t+1}, a_t | x_t)
+    = pi(a_t | x_t) p(x_{t+1} | x_t, a_t)
+      └─ action factor ┘ └────── world factor ──────┘
+```
 
-**Stage 2 — PPO fine-tune in MJX (do NOT plan in a learned model).**
-- Attach a brax PPO policy/value head on the (frozen-then-unfrozen) WAM encoder;
-  policy outputs **intention** → frozen decoder → torques → **MJX steps real
-  physics**.
-- **Avoid** Dreamer/TD-MPC "RL-in-imagination": we already have exact physics in MJX,
-  so a learned dynamics model + planner is redundant machinery. Use the WAM only as a
-  **representation / pretraining signal**; let MJX be the simulator. This keeps
-  everything inside the existing JAX/MJX + brax PPO stack.
-- **Baseline for the synergy claim:** PPO-from-scratch (= Demo A's controller) vs.
-  WAM-pretrained PPO — expect faster learning + better representation, framed as
-  distributional (Section 1), not asymptotic task score.
+1. **Collect:** roll out Demo A checkpoints with modest action noise and save
+   `(x_t, a_t, x_{t+1})`.
+2. **Learn the world factor with SSL:** fit a small residual MLP to predict the next
+   state. Keep Demo A's reward function explicit; do not hide it in the SSL loss.
+3. **Learn the action factor with RL:** freeze the world model, initialize from an early
+   Demo A checkpoint, and run the same PPO in short imagined episodes with frequent
+   resets to recorded states. This is the learned-simulator role in WorldModel.pdf §4.1.
+4. **Return to reality:** evaluate the unchanged policy in real Brax and report both
+   imagined and real return, speed, upright time, and falls.
 
-**The tidy tie-in:** a WAM = joint model of **future state + action** = **forward
-model + inverse model** = the Wolpert–Kawato internal model = the cerebellar /
-**brain–body** half. Stage-2 RL = **body–environment**. The ML term and the
-neuroscience thesis point at the same object.
+The architecture stays factorized so a beginner can identify the two learning signals:
+next-state error trains the world; reward and return train the policy. The research-grade
+intention-IDM, differentiable MJX, LAPO port, VQ bottleneck, and auxiliary-method stack
+remain archived in [demo_c_prev.md](demo_c_prev.md), not in the workshop build.
 
 ---
 
 ## 6. Data dependencies — what we're waiting for, what's buildable now
 
 **BLOCKED on the dataset the user is getting:**
-- **Rodent mocap clips** (HF `talmolab/MIMIC-MJX`, ~66 GB) → needed for Demo B, WAM
-  Stage 1, and the kinematic-realism metric.
+- **Rodent mocap clips** (HF `talmolab/MIMIC-MJX`, ~66 GB) → needed for the
+  kinematic-realism metric and the optional real-rat extension of Demo C, not its core
+  SSL + RL lesson.
 - **DLS/MC recordings** (Harvard Dataverse `10.7910/DVN/FB0MZT`; Ölveczky-lab
   lineage) → needed for the neural-realism axis of Section 4.
 - The MIMIC RSA / encoding-GLM pipeline (`github.com/diegoaldarondo/virtual_rodent`,
   on request) → needed to score the neural axis.
 
-**Buildable NOW, no dataset (do while waiting, only if asked):**
-- Demo A (RL-only from-scratch walker) — rodent model + MJX + brax PPO.
+**Buildable NOW, no external dataset:**
+- Demo C's complete minimal pipeline — its transition data comes from Demo A rollouts.
 - Metric/eval scaffolding (functional tracking metric; kinematic-stats harness ready
   to point at clips once local).
-- WAM Stage-1 code scaffold (masked-trajectory model; unit-test on synthetic
-  trajectories).
 
 **Phasing:**
-- **Phase 0 (no data):** Demo A + eval scaffolding + Stage-1 scaffold.
-- **Phase 1 (mocap clips):** Demo B; WAM Stage 1 pretraining; kinematic-realism axis;
-  Demo C Stage 2.
-- **Phase 2 (neural data):** neural-realism scoring for all three → the full 2×2.
-- **Phase 3 (optional):** swap the decoder for a **BrainPy SNN** (ties to the SNN arm
+- **Core workshop:** Demos A and B are built; build the minimal Demo C from Demo A data.
+- **Real-rat extension:** add mocap-based kinematic-realism scoring and, if wanted, train
+  a rodent-data world factor.
+- **Neural extension:** neural-realism scoring for all three → the full 2×2.
+- **Optional:** swap the decoder for a **BrainPy SNN** (ties to the SNN arm
   in PROJECT_STATE §6) and re-score.
 
-> **STATUS: waiting on the dataset before executing Phase 1+. Phase 0 is buildable
-> now but not started (per the user's "wait" instruction).**
+> **STATUS: Demo C core is buildable now and not started. External data blocks only the
+> stronger real-rat distributional/neural claims.**
 
 ---
 
 ## 7. Literature anchors (verify 2026 IDs before a slide)
 
-**Predictive pretraining → control (our real recipe lineage):**
+**Predictive-pretraining research extensions (context, not the core demo):**
 - MTM — Masked Trajectory Models, ICML 2023, arXiv:2305.02968 *(locomotion-proven; primary anchor)*
 - Humanoid locomotion as next-token prediction, NeurIPS 2024, arXiv:2402.19469
 - SMART, ICLR 2023, arXiv:2301.09816 (DMC locomotion)
 - RPT — Robot Learning w/ Sensorimotor Pre-training, CoRL 2023, arXiv:2306.10007 (manipulation)
 - LAPO — Learning to Act without Actions, ICLR 2024, arXiv:2312.10812
 
-**World-model RL (the "don't-do-this-here" contrast — MJX is our sim):**
+**World-model RL (the current Demo C lineage):**
 - World Models, Ha & Schmidhuber 2018, arXiv:1803.10122
-- DreamerV3, arXiv:2301.04104 · TD-MPC2, ICLR 2024, arXiv:2310.16828
+- Sutton, Dyna, 1991 · MBPO, NeurIPS 2019, arXiv:1906.08253
+- DreamerV3, arXiv:2301.04104 *(modern context, not an implementation dependency)*
 
 **"WAM" as a named term (2026, manipulation/VLA — cite provenance honestly):**
 - World Action Models: The Next Frontier in Embodied AI, arXiv:2605.12090
 - World Model for Robot Learning: A Comprehensive Survey, arXiv:2605.00080
-  *(the originally-cited survey; its §3/§4.1 are video-world-models for manipulation
-  + RL-in-imagination — NOT our mocap→PPO locomotion recipe)*
+  *(§3 supplies the factorized predictive-control view; §4.1 supplies RL in a learned
+  simulator. Demo C is their state-space teaching analogue, not a video/VLA reproduction.)*
 
 **Neuroscience grounding:**
 - Aldarondo et al. 2024, *Nature* (virtual rodent ≈ DLS/MC; inverse dynamics) —
@@ -222,6 +218,7 @@ neuroscience thesis point at the same object.
 ---
 
 ## 8. Framing corrections to bake into the slides
+
 Carried from the review (see also PROJECT_STATE §4/§5):
 1. **`16 / 277 / 38` are our MIMIC-MJX build's numbers**, not the Nature paper's
    (which reports a 60-D latent; only the 38 actuators are confirmed there).
@@ -230,8 +227,10 @@ Carried from the review (see also PROJECT_STATE §4/§5):
    Aldarondo 2024."
 3. **No clean MC-layer vs DLS-layer split** — both are best predicted by the decoder's
    first layer (same inverse-dynamics computation).
-4. **Synergy = distributional, not sample-efficiency** (Section 1) — the load-bearing
-   framing choice.
+4. **Synergy = distributional, not sample-efficiency** (Section 1) remains the
+   load-bearing research claim. The minimal Demo C teaches the SSL + RL mechanism; do
+   not count self-collected simulator data as evidence for real-rat distributional
+   realism. That claim waits for the mocap/neural extension.
 5. Our recordings are **DLS + MC** — DLS *is* the RL/basal-ganglia substrate, so we're
    data-rich on the RL pole and inferring the SSL/cerebellar pole from MC + behavior +
    theory. Frame that as scoping, not weakness.
@@ -239,6 +238,12 @@ Carried from the review (see also PROJECT_STATE §4/§5):
 ---
 
 ## 9. Success criterion
-The talk works if a new grad leaves able to say: **"RL made it move; SSL made it look
-like a real brain; you need both, and here's the one scatter plot that shows why."**
-The deliverable is that scatter (Section 2) with three real points from our rodent.
+
+The core workshop works if a new grad can say: **"SSL learned what happens next from
+the trajectory itself; RL used reward to choose actions; Demo C let PPO practice inside
+the learned world."**
+
+The stronger research story is complete only when the mocap/neural extension supports
+the original claim: **"RL made it move; SSL made it look like a real brain."** Its
+deliverable remains the Section 2 scatter with three empirically measured points, not
+points assigned from method labels alone.
