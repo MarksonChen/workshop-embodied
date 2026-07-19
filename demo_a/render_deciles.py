@@ -21,13 +21,12 @@ from pathlib import Path
 import jax
 import numpy as np
 
-from brax.v1.envs import fetch as v1fetch
+from fetch_run import make_env, deciles_dir, out_prefix
 from brax.v1.io import image
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 
 OUT = Path(__file__).resolve().parent / "out"
-DEC = OUT / "deciles"
 
 
 def cyclicity(signal, dt, min_lag=5):
@@ -48,18 +47,20 @@ def cyclicity(signal, dt, min_lag=5):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--env", choices=["fetch", "run"], default="fetch")
     ap.add_argument("--steps", type=int, default=300)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--width", type=int, default=400)
     ap.add_argument("--height", type=int, default=300)
     args = ap.parse_args()
 
+    DEC = deciles_dir(OUT, args.env)
     ckpts = sorted(DEC.glob("fetch_*pct_*.pkl"))
     if not ckpts:
-        raise SystemExit(f"no decile checkpoints in {DEC} -- run train_fetch.py --save_deciles")
-    print(f"{len(ckpts)} checkpoints | {args.steps} steps/rollout | seed {args.seed}")
+        raise SystemExit(f"no decile checkpoints in {DEC} -- run train_fetch.py --env {args.env} --save_deciles")
+    print(f"[{args.env}] {len(ckpts)} checkpoints | {args.steps} steps/rollout | seed {args.seed}")
 
-    env = v1fetch.Fetch()
+    env = make_env(args.env)
     dt = env.sys.config.dt
     torso_i = env.torso_idx
     foot_i = env.sys.body.index["Front Left Lower"]
@@ -120,11 +121,11 @@ def main():
         if have_mp4:
             frames = [np.asarray(image.render_array(env.sys, qp, args.width, args.height, ssaa=1))
                       for qp in qps]
-            mp4 = OUT / f"decile_{pct:03d}pct.mp4"
+            mp4 = OUT / f"{out_prefix(args.env)}_{pct:03d}pct.mp4"
             imageio.mimwrite(mp4, frames, fps=int(round(1 / dt)))
 
     if have_mp4:
-        print(f"\nwrote {len(rows)} videos: {OUT}/decile_XXXpct.mp4")
+        print(f"\nwrote {len(rows)} videos: {OUT}/{out_prefix(args.env)}_XXXpct.mp4")
 
 
 if __name__ == "__main__":

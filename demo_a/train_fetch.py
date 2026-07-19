@@ -20,7 +20,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jp
 
-from brax.v1.envs import fetch as v1fetch
+from fetch_run import make_env, deciles_dir
 from brax.envs.base import Env as V2Env
 from brax.envs.base import State as V2State
 from brax.envs.base import Wrapper
@@ -32,10 +32,12 @@ OUT = Path(__file__).resolve().parent / "out"
 
 
 class FetchV2(V2Env):
-    """Adapt brax v1 fetch to the v2 Env interface. pipeline_state = full v1 State."""
+    """Adapt a brax v1 fetch-family env to the v2 Env interface. pipeline_state =
+    full v1 State. The inner env ('fetch' reach-a-target, or 'run' constant-speed)
+    is injected so the same PPO plumbing drives either task."""
 
-    def __init__(self):
-        self._env = v1fetch.Fetch()
+    def __init__(self, inner):
+        self._env = inner
 
     def reset(self, rng) -> V2State:
         s = self._env.reset(rng)
@@ -91,6 +93,8 @@ def wrap_fetch_for_training(env, episode_length=1000, action_repeat=1, **_):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--env", choices=["fetch", "run"], default="fetch",
+                    help="'fetch' = reach-a-target (scramble); 'run' = constant-speed run (gait probe)")
     ap.add_argument("--num_timesteps", type=float, default=5e7)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save_deciles", action="store_true",
@@ -102,12 +106,12 @@ def main():
     n_envs = 512 if args.smoke else 2048
     n_evals = 11 if args.save_deciles else (2 if args.smoke else 10)
     print(f"jax devices: {jax.devices()}")
-    env = FetchV2()
-    print(f"FetchV2 | obs {env.observation_size} | act {env.action_size} | steps {n:.0e} "
-          f"| evals {n_evals}")
+    env = FetchV2(make_env(args.env))
+    print(f"FetchV2[{args.env}] | obs {env.observation_size} | act {env.action_size} "
+          f"| steps {n:.0e} | evals {n_evals}")
 
     t0 = time.time()
-    dec_dir = OUT / "deciles"
+    dec_dir = deciles_dir(OUT, args.env)
 
     def save_ckpt(step, make_policy, params):
         """policy_params_fn hook -- pickle the (normalizer, policy, value) tuple per eval."""
@@ -147,7 +151,7 @@ def main():
         policy_params_fn=save_ckpt,
     )
     OUT.mkdir(parents=True, exist_ok=True)
-    out = OUT / f"fetch_{datetime.now().strftime('%Y%m%d-%H%M%S')}.pkl"
+    out = OUT / f"fetch{'_run' if args.env == 'run' else ''}_{datetime.now().strftime('%Y%m%d-%H%M%S')}.pkl"
     with open(out, "wb") as f:
         pickle.dump(params, f)
     print(f"Training complete in {time.time()-t0:.0f}s. Saved {out}", flush=True)

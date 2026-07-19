@@ -25,25 +25,26 @@ from pathlib import Path
 import jax
 import numpy as np
 
-from brax.v1.envs import fetch as v1fetch
+from fetch_run import make_env, deciles_dir
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 
 OUT = Path(__file__).resolve().parent / "out"
-DEC = OUT / "deciles"
 
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--env", choices=["fetch", "run"], default="fetch")
     ap.add_argument("--steps", type=int, default=600)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
+    DEC = deciles_dir(OUT, args.env)
     ckpts = sorted(DEC.glob("fetch_*pct_*.pkl"))
     if not ckpts:
         raise SystemExit(f"no checkpoints in {DEC}")
 
-    env = v1fetch.Fetch()
+    env = make_env(args.env)
     dt = env.sys.config.dt
     fs = 1.0 / dt
     feet = [env.sys.body.index[b] for b in
