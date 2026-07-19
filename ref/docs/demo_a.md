@@ -3,6 +3,24 @@
 _Created 2026-07-18. Companion to [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) (thesis) and
 [PROJECT_STATE.md](PROJECT_STATE.md) (assets)._
 
+**⚠️ PIVOT (2026-07-19): `RodentMaintainVelocity` reward-hacks — moving to a retargeted
+quadruped.** The spartan rodent env (forward-velocity reward only, raw torque,
+`noslip_iterations=0`) doesn't learn to *walk* — it learns to **twitch-slide** (vibrate in
+impossible postures and slide on foot friction). The fix is to copy a **proven** MuJoCo
+quadruped locomotion env and retarget its body to a rodent:
+- **Phase 1 DONE:** MuJoCo Playground **`Go1JoystickFlatTerrain`** (12-DoF, position/PD
+  actuators, velocity-tracking + foot air-time/slip shaping) trains a **real walker in
+  6.7 min** on one H100 (reward 28.6, full-episode survival). Trainer: `demo_a/train_go1.py`
+  (with a `mjx.make_data` nconmax→naconmax shim). ~358k sps (18× the rodent env).
+- **Phase 2 (next):** retarget the Go1 body to rodent proportions (keep the 12 DoF + the
+  proven env/reward), by subclassing the Go1 env with a rat-scaled model (primitives, no
+  mesh deps). See the render horror + diagnosis that motivated this in the chat log.
+
+The `RodentMaintainVelocity` probe below is kept for the record (it *is* a clean example of
+reward-hacking for the talk), but is **not** the Demo A walker.
+
+---
+
 **Status: convergence probe DONE (2026-07-19).** A competent-but-**veering** walker emerges
 from scratch — **~0.4 m/s forward by ~35 M steps (~35 min, one H100)**, then survival keeps
 improving (fallen 100%→50% by 53 M). Not flailing (§2 risk retired), not natural (it curves —
