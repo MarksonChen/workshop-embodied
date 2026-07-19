@@ -105,7 +105,7 @@ def main():
             txy.append(np.asarray(state.qp.pos[torso_i, :2]))
             fz.append(float(state.qp.pos[foot_i, 2]))
             rew.append(float(state.reward))
-            hits += float(state.metrics["hits"])
+            hits += float(state.metrics.get("hits", 0.0))  # 'run' task has no hits metric
 
         txy = np.asarray(txy)
         steps_disp = np.linalg.norm(np.diff(txy, axis=0), axis=1)
