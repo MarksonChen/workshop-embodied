@@ -12,9 +12,14 @@ quadruped locomotion env and retarget its body to a rodent:
   actuators, velocity-tracking + foot air-time/slip shaping) trains a **real walker in
   6.7 min** on one H100 (reward 28.6, full-episode survival). Trainer: `demo_a/train_go1.py`
   (with a `mjx.make_data` nconmax→naconmax shim). ~358k sps (18× the rodent env).
-- **Phase 2 (next):** retarget the Go1 body to rodent proportions (keep the 12 DoF + the
-  proven env/reward), by subclassing the Go1 env with a rat-scaled model (primitives, no
-  mesh deps). See the render horror + diagnosis that motivated this in the chat log.
+- **Phase 2 DONE:** a **12-DoF rodent** = Go1 physics verbatim + rodent primitive visuals
+  (`demo_a/models/rodent_go1.xml`, self-contained, injected via `train_go1.py --model`).
+  Trains a real walker (**0.79 m/s, upright, full-episode**) in **3.9 min** on one H100 at
+  1e8 steps — the **hard <10-min live-workshop budget met with margin** (rat visuals add
+  ~28% FK cost, so cap at 1e8, not the stock 2e8). This is Demo A's walker: reduced DoF,
+  reliable, a real gait (not the RodentMaintainVelocity twitch-slide), rodent-shaped.
+  Video: `demo_a/out/go1_go1_<step>.mp4`. Render with
+  `render_go1.py <ckpt> 500 demo_a/models/rodent_go1.xml`.
 
 The `RodentMaintainVelocity` probe below is kept for the record (it *is* a clean example of
 reward-hacking for the talk), but is **not** the Demo A walker.
