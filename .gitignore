@@ -29,3 +29,7 @@ rl/remote/.env
 
 # Demo B run artifacts (models/videos/logs)
 demo_b/out/
+
+# Demo A run artifacts
+demo_a/runs/
+demo_a/out/
