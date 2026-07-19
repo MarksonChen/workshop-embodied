@@ -3,7 +3,12 @@
 _Created 2026-07-18. Companion to [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) (thesis) and
 [PROJECT_STATE.md](PROJECT_STATE.md) (assets)._
 
-**Status: not started — buildable now, needs no dataset.**
+**Status: convergence probe DONE (2026-07-19).** A competent-but-**veering** walker emerges
+from scratch — **~0.4 m/s forward by ~35 M steps (~35 min, one H100)**, then survival keeps
+improving (fallen 100%→50% by 53 M). Not flailing (§2 risk retired), not natural (it curves —
+on-thesis). Full results + the metric lesson (reward conflates speed×survival → track speed +
+fallen% separately) in [demo_a/README.md](../../demo_a/README.md). Remaining: reward-shaping
+variants + the distributional (gait-vs-real) axis.
 
 ---
 
