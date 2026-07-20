@@ -776,6 +776,7 @@ dev = [
 ]
 workshop = [
     { name = "h5py" },
+    { name = "huggingface-hub" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
     { name = "matplotlib" },
@@ -790,6 +791,7 @@ workshop = [
 [package.metadata]
 requires-dist = [
     { name = "h5py", marker = "extra == 'workshop'", specifier = ">=3.12" },
+    { name = "huggingface-hub", marker = "extra == 'workshop'", specifier = ">=0.34" },
     { name = "imageio", marker = "extra == 'workshop'", specifier = ">=2.37" },
     { name = "imageio-ffmpeg", marker = "extra == 'workshop'", specifier = ">=0.6" },
     { name = "matplotlib", marker = "extra == 'workshop'", specifier = ">=3.10" },

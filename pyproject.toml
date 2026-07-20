@@ -19,6 +19,7 @@ cuda13 = ["track-mjx[cuda13]"]
 workshop = [
     "torch==2.8.0",
     "h5py>=3.12",
+    "huggingface-hub>=0.34",
     "imageio>=2.37",
     "imageio-ffmpeg>=0.6",
     "matplotlib>=3.10",

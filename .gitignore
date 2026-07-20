@@ -45,6 +45,10 @@ demo_d/out/
 # Demo E caches, checkpoints, reports, plots, and videos
 demo_e/out/
 
+# Demo F retarget renders, local releases, checkpoints, and reports
+demo_f/out/
+demo_f/dataset/release/
+
 # Demo A run artifacts
 demo_a/runs/
 demo_a/out/
