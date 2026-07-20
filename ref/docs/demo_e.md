@@ -2,6 +2,10 @@
 
 _Updated 2026-07-20. Canonical implementation: pipeline v6 in `demo_e/`._
 
+> **Research reference.** Demo E is no longer in the core live workshop. Its
+> ten-minute upright-stance failure motivated the faster same-body Demo F/G
+> design. See [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) and [demo_g.md](demo_g.md).
+
 Demo E is implemented end to end, including a conditional Demo B scorer that
 passes the frozen transfer gates and a measured ten-minute E1 run. It does not
 yet have a reportable E0/E1 locomotion comparison. The ten-minute E1 policy

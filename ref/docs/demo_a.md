@@ -1,108 +1,115 @@
-# Demo A — RL-only from-scratch walker (plan)
+# Demo A — PPO locomotion from scratch on Fetch
 
-_Created 2026-07-18. Companion to [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) (thesis) and
-[PROJECT_STATE.md](PROJECT_STATE.md) (assets)._
+_Updated 2026-07-20. Companion to [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) and the
+operational [`demo_a/README.md`](../../demo_a/README.md)._
 
-**⚠️ PIVOT (2026-07-19): `RodentMaintainVelocity` reward-hacks — moving to a retargeted
-quadruped.** The spartan rodent env (forward-velocity reward only, raw torque,
-`noslip_iterations=0`) doesn't learn to *walk* — it learns to **twitch-slide** (vibrate in
-impossible postures and slide on foot friction). The fix is to copy a **proven** MuJoCo
-quadruped locomotion env and retarget its body to a rodent:
-- **Phase 1 DONE:** MuJoCo Playground **`Go1JoystickFlatTerrain`** (12-DoF, position/PD
-  actuators, velocity-tracking + foot air-time/slip shaping) trains a **real walker in
-  6.7 min** on one H100 (reward 28.6, full-episode survival). Trainer: `demo_a/train_go1.py`
-  (with a `mjx.make_data` nconmax→naconmax shim). ~358k sps (18× the rodent env).
-- **Phase 2 DONE:** a **12-DoF rodent** = Go1 physics verbatim + rodent primitive visuals
-  (`demo_a/models/rodent_go1.xml`, self-contained, injected via `train_go1.py --model`).
-  Trains a real walker (**0.79 m/s, upright, full-episode**) in **3.9 min** on one H100 at
-  1e8 steps — the **hard <10-min live-workshop budget met with margin** (rat visuals add
-  ~28% FK cost, so cap at 1e8, not the stock 2e8). This is Demo A's walker: reduced DoF,
-  reliable, a real gait (not the RodentMaintainVelocity twitch-slide), rodent-shaped.
-  Video: `demo_a/out/go1_go1_<step>.mp4`. Render with
-  `render_go1.py <ckpt> 500 demo_a/models/rodent_go1.xml`.
+## Purpose
 
-The `RodentMaintainVelocity` probe below is kept for the record (it *is* a clean example of
-reward-hacking for the talk), but is **not** the Demo A walker.
+Demo A introduces reinforcement learning before any motion data or learned
+prior appears. A policy controls the unmodified ten-actuator Brax v1 Fetch body
+and learns only from consequences in simulation.
 
----
+The canonical workshop task is `FetchRun`, not the original one-shot target
+reach. The body must sustain forward speed, remain upright, and avoid excessive
+control effort:
 
-**Status: convergence probe DONE (2026-07-19).** A competent-but-**veering** walker emerges
-from scratch — **~0.4 m/s forward by ~35 M steps (~35 min, one H100)**, then survival keeps
-improving (fallen 100%→50% by 53 M). Not flailing (§2 risk retired), not natural (it curves —
-on-thesis). Full results + the metric lesson (reward conflates speed×survival → track speed +
-fallen% separately) in [demo_a/README.md](../../demo_a/README.md). Remaining: reward-shaping
-variants + the distributional (gait-vs-real) axis.
+\[
+r_t=\exp\left(-\frac{(v_x-3)^2}{2}\right)
++0.1\,u_z-10^{-3}\lVert a_t\rVert^2.
+\]
 
----
+The episode ends if torso height falls below half the standing height or torso
+up points below the horizon.
 
-## 1. Role in the thesis
+## What students should learn
 
-Demo A is the **RL-only** corner of the 2×2 (WORKSHOP_PLAN §2): **functional realism,
-~zero distributional realism.** It must be a *competent-but-unnatural* walker — moves
-forward fine, but its gait and internal representation don't match the real rat.
+- A policy maps a current observation to an action distribution.
+- The environment, not a labeled dataset, returns the next observation and one
+  scalar reward.
+- PPO changes the policy so sampled actions with better-than-expected returns
+  become more likely.
+- No target torque or target joint trajectory is supplied.
+- A policy can optimize the task without matching the distribution of recorded
+  animal motion.
 
-It is the **true no-prior baseline** — explicitly **not** our existing joystick walker,
-which rides the imitation-pretrained NPMP decoder, already carries a data prior, and
-therefore sits near the *both* corner (see §5).
+Use the original Fetch reach task only as an optional reward-design contrast:
+reaching a point can be solved by lunging or scrambling, while holding speed
+requires sustained cyclic behavior.
 
-## 2. The one risk that governs the whole design
+## Code path
 
-From-scratch RL on a 38-DoF torque-actuated body can **flail** instead of walking. A
-flailing Demo A conflates "RL can't control 38 DoF" (a compute artifact) with "RL isn't
-distributionally real" (the actual point). So the plan is built around making it
-**competent-but-ugly, cheaply**, and *not* rewarding naturalness — the ugliness must be
-emergent, not imposed.
+```text
+fetch_run.py       FetchRun reward and termination; original Fetch is also available
+train_fetch.py     thin Brax v1-to-v2 adapter plus standard PPO call
+render_deciles.py deterministic checkpoint rollouts and simple gait statistics
+analyze_gait.py    stride-band versus high-frequency spectral diagnostics
+render_fetch.py    single-checkpoint original-Fetch renderer
+```
 
-## 3. Stack
+The 101-D observation and ten actions are inherited unchanged from Brax Fetch.
+`FetchV2` carries the full v1 state through Brax’s v2 PPO wrappers; it does not
+change the task.
 
-- Same MJX rodent body + brax PPO as `rl/`, but with the **decoder removed**: the policy
-  outputs **raw torques (38-dim action)** from proprioception. **Env:
-  `RodentMaintainVelocity`** (registered in vnl_playground; `torque_actuators=True`, a
-  forward-velocity reward, and *no upright reward* — so it must learn to stay up) — trained
-  directly via track-mjx `scripts/train_task.py` (**not** `train_highlvl.py`, which wraps the
-  decoder). No new env to build.
-- Reuse `rl/` tooling: the `train_joystick`-style launcher, `watch_health.py`,
-  `render_joystick.py`, and the `LD_LIBRARY_PATH` + wandb fixes (PROJECT_STATE §5).
+## Run
 
-## 4. Staged build
+From the repository root:
 
-### Stage 0 — de-risk (before spending real GPU)
-Short smoke run with a **well-shaped locomotion reward**:
-- forward-velocity tracking + alive + upright/orientation + energy/torque penalty +
-  **action-rate smoothness** (the term that most reliably turns flailing into a gait).
-- Confirm a *stable* gait emerges cheaply. If it flails: add a **curriculum** (ramp
-  commanded speed, forgiving termination) or adopt a proven MuJoCo-Playground
-  quadruped/locomotion reward before committing.
+```bash
+env -u LD_LIBRARY_PATH uv run --isolated \
+  --with 'brax==0.12.3' --with 'jax[cuda12]==0.4.30' \
+  --with 'jaxlib==0.4.30' \
+  python -m demo_a.train_fetch --env run --num_timesteps 3e7
+```
 
-### Stage 1 — train
-Train to a competent-but-ugly walker. Budget **~100–300 M steps** (raw-torque-from-scratch
-is harder than the decoder-based joystick, which needed ~50 M) → real H100 time.
-Checkpoint + monitor as in PROJECT_STATE.
+Use `--smoke` for a 2M-transition wiring check and `--save_deciles` to preserve
+learning snapshots. Render and analyze the saved deciles with:
 
-### Stage 2 — score on the shared axes (WORKSHOP_PLAN §4)
-- **Functional:** commanded-velocity tracking in MJX — should score **well**.
-- **Kinematic-distributional:** gait statistics (stride frequency, duty factor,
-  joint-angle ranges, inter-joint correlations) vs the real-rat mocap distribution —
-  should score **poorly** (the point). Reuse `demo_b/foot_metrics.py` + a small gait-stats
-  module over the Aldarondo `qpos`. Mind the data gotchas ([dataset.md](dataset.md)):
-  **merge locomotion bouts** (raw runs are shredded by label flicker) and **finite-diff
-  `qvel`**.
-- **Neural (Phase 2):** MIMIC Poisson-GLM + RSA of its activations vs DLS/MC — should
-  out-predict raw kinematics **least** of the three demos.
+```bash
+env -u LD_LIBRARY_PATH uv run --isolated \
+  --with 'brax==0.12.3' --with 'jax[cuda12]==0.4.30' \
+  --with 'imageio[ffmpeg]' python demo_a/render_deciles.py --env run
 
-## 5. The minimum-viable thesis demo (do this first)
+env -u LD_LIBRARY_PATH uv run --isolated \
+  --with 'brax==0.12.3' --with 'jax[cuda12]==0.4.30' \
+  python demo_a/analyze_gait.py --env run
+```
 
-**Demo A + our existing joystick walker** is *already* a clean two-point demonstration of
-the thesis, buildable now with no dataset dependency:
-- raw-torque RL (no prior) → moves, but gait/representation wrong;
-- decoder prior + PPO → moves **and** looks real.
+## Measured evidence
 
-Treat this pair as the MVP; the SSL-WAM ([demo_c.md](demo_c.md)) is the principled upgrade
-of the "data prior."
+The saved 500M-transition run used 2,048 environments:
 
-## 6. Open questions
-- ~~Torque-control env?~~ **Resolved: `RodentMaintainVelocity`** (raw torque,
-  forward-velocity reward, no upright reward) via `scripts/train_task.py`.
-- How unnatural is the emergent gait, quantitatively, vs real? *That number is the demo.*
-- The neural axis is blocked until the DLS/MC comparison pipeline exists (shared with
-  [demo_c.md](demo_c.md) and the story-map "Arc 01").
+- initial compilation/evaluation completed at about 15 seconds;
+- the 50M checkpoint appeared at about 66 seconds;
+- the 100M checkpoint appeared at about 106 seconds;
+- the full 500M run completed at about 423 seconds.
+
+By 50M, evaluation return was about 1,060 over a 1,000-step episode. Fixed-seed
+300-step rollouts of later checkpoints sustain roughly 3.0 Fetch units/s with
+path straightness around 0.99. Spectral analysis places most foot-height power
+in the 1–6 Hz gait band rather than above 8 Hz.
+
+The transition-matched task-only arms in Demo G establish the shorter live
+budget: 30M transitions with three evaluations takes 57.8–59.8 seconds across three
+seeds and already supplies the functional G0 behavior. Use that budget for the
+live A-to-G arc. Keep the 100M or 500M checkpoint only as an optional polished
+standalone Demo A asset.
+
+## Bridge to Demo F and Demo G
+
+The original spatial retarget happened to map 0.20 m/s source motion to about
+3.06 Fetch units/s, but it enlarged the body by 21.3789x without changing time.
+That is a kinematic coincidence rather than a dynamically valid bridge. Demo F
+now applies the 4.6237x Froude time scale, mapping the same source command to
+0.924747 Fetch units/s. Demo G reuses `FetchRun`'s reward form and PPO plumbing,
+sets this declared target, and preserves Demo A's `sigma / target = 1/3` ratio.
+
+`demo_a/train_fetch.py` also exports the adapter and wrappers reused by Demo G.
+The beta-zero Demo G arm must remain numerically equivalent to this task at the
+declared slower target.
+
+## Claim boundary
+
+Demo A demonstrates functional learning from interaction. It does not establish
+that the learned gait resembles a rat, and it is not a same-body baseline for
+native skeletal-rodent experiments. The controlled workshop comparison is
+between Demo G’s G0 and G1 arms on this exact Fetch body.

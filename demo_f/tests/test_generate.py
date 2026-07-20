@@ -1,7 +1,12 @@
 import numpy as np
 
 from demo_f.features import SL
-from demo_f.generate import command_scale, integrate_root
+from demo_f.generate import (
+    COMMAND_HORIZON_SECONDS,
+    command_scale,
+    dataset_command_calibration,
+    integrate_root,
+)
 
 
 def test_command_calibration_is_robust_to_nonstraight_outlier():
@@ -10,6 +15,19 @@ def test_command_calibration_is_robust_to_nonstraight_outlier():
     )
     speed = np.asarray([0.1] * 25, dtype=np.float32)
     assert np.isclose(command_scale(command, speed), 10.0)
+
+
+def test_dynamic_release_uses_declared_froude_velocity_scale():
+    calibration = dataset_command_calibration(
+        {"dynamic_scaling": {"velocity_scale": 4.5}},
+        np.zeros((1, 3), np.float32),
+        np.zeros(1, np.float32),
+    )
+    assert calibration["method"].startswith("declared Froude")
+    assert np.isclose(
+        calibration["fetch_displacement_per_mps"],
+        4.5 * COMMAND_HORIZON_SECONDS,
+    )
 
 
 def test_integrate_root_uses_local_velocity_and_bounds_joints():

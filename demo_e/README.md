@@ -1,6 +1,11 @@
 # Demo E — task RL with a frozen motion prior
 
-Demo E is the workshop's literal composition of Demos A and B:
+> **Research reference (2026-07-20).** Demo E preserves the full-skeletal-rodent
+> attempt and its negative ten-minute result. It is no longer the live workshop
+> synthesis; the current fast same-body design is Demo G. See
+> [`ref/docs/WORKSHOP_PLAN.md`](../ref/docs/WORKSHOP_PLAN.md).
+
+Demo E was the workshop's first literal composition of Demos A and B:
 
 ```text
 Demo A: PPO learns what works from task reward.

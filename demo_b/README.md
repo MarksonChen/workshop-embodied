@@ -16,7 +16,8 @@ p(next token | history, command) = Normal(predicted mean, sigma^2 I)
 
 Because `sigma` is fixed, maximizing this likelihood is exactly equivalent to
 minimizing the model's original MSE. The likelihood API therefore does not
-change generation; it exposes the frozen scalar score needed by Demo E.
+change generation. It teaches the probabilistic bridge that Demo F repeats on
+the Fetch body before Demo G uses the resulting frozen score.
 
 ## Frozen representation and locomotion subset
 
@@ -66,7 +67,8 @@ This establishes the teaching bridge and the behaviorally good generator. The
 speed audit is in-sample, so it demonstrates that the frozen conditional model
 uses its command; it is not an independent biological-realism result.
 
-Demo E's framework-neutral export is now built with:
+The archived Demo E research path can still build its framework-neutral export
+with:
 
 ```bash
 uv run --extra workshop python -m demo_b.export_jax
@@ -94,8 +96,9 @@ The accepted inspection videos are:
 - `out/restored_coltrane_v020_straight.mp4`
 - `out/restored_coltrane_v025_straight.mp4`
 
-These are kinematic generations. Demo E asks PPO to produce plausible motion
-while controlling the same skeletal rodent in contact-rich physics.
+These are kinematic generations, not physical control. The current workshop
+next retargets the same locomotion concept to Fetch in Demo F; Demo G then adds
+that same-body prior to physical PPO.
 
 ## Layout
 
@@ -105,10 +108,11 @@ promote_coltrane.py    unchanged-weight rollback + likelihood calibration
 speed_sweep.py         fixed-speed rollout and video generation
 strict_locomotion.py   exact geometric locomotion rule
 marker_bridge.py       calibrated skeleton sites for all 23 keypoints
-export_jax.py          compact frozen scorer used inside Demo E
+export_jax.py          compact scorer retained for archived Demo E research
 train_full_prior.py    controlled Coltrane/Freddie research comparisons
 geometry.py            decoded features -> skeletal qpos
 rollout.py             autoregressive generation and rendering
 ```
 
-See [`demo_e/README.md`](../demo_e/README.md) for the physical SSL+RL status.
+See [`demo_f/README.md`](../demo_f/README.md) for the current retargeted-data
+bridge and [`ref/docs/demo_b.md`](../ref/docs/demo_b.md) for the workshop notes.

@@ -16,6 +16,12 @@ DEFAULT_ROOT = Path(
         Path(__file__).resolve().parent / "release",
     )
 )
+DYNAMIC_ROOT = Path(
+    os.environ.get(
+        "DEMO_F_DYNAMIC_DATASET_ROOT",
+        Path(__file__).resolve().parent / "release_dynamic",
+    )
+)
 
 CLIP_FRAMES = 64
 FPS = 50

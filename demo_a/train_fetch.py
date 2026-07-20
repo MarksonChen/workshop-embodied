@@ -20,7 +20,10 @@ from pathlib import Path
 import jax
 import jax.numpy as jp
 
-from fetch_run import make_env, deciles_dir
+try:
+    from .fetch_run import make_env, deciles_dir
+except ImportError:  # direct script entry point used by the workshop commands
+    from fetch_run import make_env, deciles_dir
 from brax.envs.base import Env as V2Env
 from brax.envs.base import State as V2State
 from brax.envs.base import Wrapper

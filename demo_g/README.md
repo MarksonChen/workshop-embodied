@@ -1,175 +1,225 @@
-# Demo G plan — Demo A + Demo F
+# Demo G — Demo A task PPO plus Demo F motion prior
 
-Demo G is the workshop's combined SSL + RL demonstration on one simple,
-fast-training body:
+Demo G is the workshop's controlled SSL + RL comparison on one physical body:
 
 ```text
-Demo A: task reward teaches Fetch what works
-Demo F: retargeted data teaches what rodent-derived Fetch motion looks like
-Demo G: the same Fetch PPO policy is rewarded for both
+G0: Demo A task reward
+G1: Demo A task reward + frozen Demo F motion score
 ```
 
-The target is the unmodified Brax v1 Fetch body and Demo A locomotion task. This
-removes the difficult 38-torque skeletal-rodent control problem that prevented
-Demo E from becoming a five-minute workshop result.
+The best-performing accepted model is dynamic seed 0. It preserves the task and
+substantially reduces the full held-out gait-distance score. The three-seed
+result is intentionally narrower: learned likelihood improves in every seed,
+but the full direct gait composite improves in only two. This is evidence that
+a data prior can shape physical RL, not that it solves locomotion realism.
 
-## 1. Scientific and teaching claim
-
-Demo F learns a conditional likelihood from recorded motion after a declared,
-deterministic cross-morphology transform. Demo G freezes that likelihood and
-uses it as a reward term while PPO interacts with Fetch physics:
+## Objective
 
 \[
-\max_\pi\;\mathbb E_{\tau\sim\pi}
-\sum_t\gamma^t\left[
-r_t^{\rm task}
-+\beta\,\bar\ell_\phi(w_t\mid h_t,c_t)
-\right].
+\max_\pi\;\mathbb E_{\tau\sim\pi}\sum_t\gamma^t
+\left[r_t^{\rm task}+\beta\,
+\bar\ell_\phi(w_t\mid h_t,c_t)\right].
 \]
 
-Here `w_t` is motion the physical Fetch policy just produced, `h_t` is its
-causal motion history, and `c_t` is the same hindsight displacement convention
-used to train Demo F. The frozen normalized likelihood `bar(ell)` receives no
-gradient; PPO still learns actions only from return.
+`w_t` is the motion Fetch just produced, `h_t` is its causal motion history,
+and `c_t` is Demo F's fixed hindsight displacement command. The Demo F model is
+frozen. PPO receives no target torque or action and still discovers actions
+from return.
 
-The careful wording is **rodent-derived motor realism on Fetch**, not literal
-rat biomechanics. Retargeting preserves semantic paw/trunk trajectories and
-contact timing while changing morphology and scale.
-
-## 2. Controlled comparison
-
-Implement two arms that differ by one scalar term:
-
-| arm | Demo A task reward | frozen Demo F likelihood |
+| arm | task reward | frozen prior score |
 |---|---:|---:|
-| G0 task-only | yes | no (`beta=0`) |
-| G1 task + prior | yes | yes |
+| G0 | yes | no (`beta=0`) |
+| G1 | yes | yes (`beta=0.1`) |
 
-Both arms must share the Fetch body, reset distribution, command schedule,
-policy initialization, PPO hyperparameters, random seed, environment count,
-and transition budget. `beta=0` must reproduce Demo A step/reward traces within
-numerical tolerance before the comparison begins.
+Matched arms share policy initialization, environment count, PPO settings,
+transition budget, reset distribution, and paired evaluation seeds.
 
-## 3. Implementation sequence
+## Dynamic alignment
 
-### Gate F0 — accept retargeted data
+The original retargeting enlarged length by 21.3789x but retained a 50 Hz clock,
+making the old 3-unit/s target look like low-gravity motion. Froude similarity
+requires a 4.6237x time dilation. The accepted Demo F prior and Demo G task now
+share the declared mapping:
 
-Inspect Demo F's four speed clips and quantitative contact/IK report. Reject or
-revise the transform before model tuning if feet skate, limbs saturate, or gait
-phase is visibly wrong.
+- rodent source command: 0.20 m/s;
+- physical Fetch target: 0.924747 units/s;
+- 0.62-second prior command: `[0.573343, 0, 0]`;
+- tracking width: `sigma = target / 3 = 0.308249`.
 
-### Gate F1 — freeze the Fetch motion contract
+Preserving Demo A's dimensionless `sigma / target` ratio matters: keeping
+`sigma=1` would give a stationary Fetch about 65% of maximum tracking reward.
 
-Construct a compact state shared exactly by offline data and live Brax states:
-root-local velocity, height/orientation, ten joint angles and velocities, four
-foot positions/velocities, and contacts. Add parity tests against the original
-Brax kinematics. Split by source session before forming overlapping crops.
+## Frozen scorer and reward calibration
 
-### Gate F2 — train and validate Demo F
+Each environment collects the same 60-D feature contract used by Demo F. A
+32-frame causal buffer warms up before scoring. One batch-level JAX call scores
+all 2,048 environments every four 50 Hz control frames (12.5 Hz), and the most
+recent score is held between calls. The task reward is still computed every
+frame. This is what “scoring every four frames” means; it does not change the
+physics rate.
 
-Start from Demo B's causal-convolutional tokenizer plus conditional Transformer,
-but instantiate it with Demo F-owned dimensions and hyperparameters. Optimize
-throughput before tuning quality. Candidate changes must be recorded one at a
-time and selected on validation sessions.
+Retargeted root motion is yaw-only, so four unsupported roll/pitch channels are
+projected to zero before scoring. The remaining planar root, joint, foot, and
+contact contract matches offline features to `6e-7`. The JAX export matches the
+PyTorch prior at `5e-4` tolerance.
 
-Freeze a model only if it passes all of the following:
+Calibration was frozen before the dynamic G1 runs. Retimed validation windows
+have median raw log likelihood `-0.17`; the matched task-only seed-0 policy has
+median `-21.2` with 5th/95th percentiles `-34.3/-12.0`. The bounded reward is
 
-- held-out reconstruction and next-token likelihood beat persistence;
-- real sequences score above time-shuffled and independently permuted legs;
-- the matching speed/turn command outranks counterfactual commands;
-- autoregressive rollouts remain upright-looking and periodic for at least 5 s;
-- generated contact, joint-limit, and foot-skate metrics remain in the
-  retargeted-data range;
-- likelihood computation has sufficient batched JAX throughput for PPO.
+\[
+\bar\ell=\operatorname{sigmoid}\left(\frac{\ell+20}{5}\right),
+\qquad \beta=0.1.
+\]
 
-### Gate G0 — integrate without changing Demo A
+Always report raw held-out `prior_logp` separately from this transformed
+training reward.
 
-Add a thin Demo A environment wrapper that maintains per-environment causal
-feature history. Evaluate the frozen prior only at its token rate and hold the
-last shaping reward between token boundaries. Give every episode an explicit
-history warm-up during which prior reward is zero.
+## Training
 
-Unit tests must establish:
+The frozen live budget is 30M transitions, 2,048 environments, and three PPO
+evaluations:
 
-- online features equal the offline Demo F definition;
-- command conversion matches Demo F's hindsight horizon;
-- the exported JAX scorer matches its PyTorch source;
-- reward and transitions are identical when `beta=0`;
-- resets cannot leak history between vectorized environments.
+```bash
+env -u LD_LIBRARY_PATH uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax[cuda12]==0.4.30' \
+  --with 'jaxlib==0.4.30' --with scipy \
+  python -m demo_g.train --arm g0 --seed 0
 
-### Gate G1 — calibrate, then freeze the reward
-
-Before PPO, score fixed datasets consisting of retargeted motion, early Demo A
-tumbling, and late Demo A locomotion. Freeze a robust affine/quantile transform
-to a bounded reward range and choose a small beta grid using training seeds
-only. Report raw log likelihood separately from its reward transform.
-
-### Gate G2 — paired PPO
-
-Run G0 and G1 for the same transition budget. Demo A previously processed
-roughly 100M transitions in about two minutes and 500M in about seven minutes on
-this machine, so first target 100--250M transitions and reserve the five-minute
-wall-clock claim for a measured run including compilation. Increase the budget
-only if both arms are still improving and the workshop can use saved playback.
-
-## 4. Evaluation
-
-Evaluate checkpoints at fixed straight speeds and left/right turns, with held
-out random seeds. Keep the two axes separate:
-
-**Functional realism**
-
-- forward/yaw tracking error;
-- return and survival;
-- target/waypoint success if the reach task is retained;
-- control energy and lateral drift.
-
-**Distributional motor realism**
-
-- raw Demo F log likelihood after causal warm-up;
-- matching-command rank and margin;
-- stride-band versus high-frequency power;
-- diagonal/contact phase structure across four feet;
-- stance-foot speed, penetration, and joint-limit occupancy.
-
-The preferred workshop result is not merely a higher shaped return. G1 must
-retain at least 95% of G0's functional score while improving held-out raw
-likelihood and at least one direct gait/contact metric across multiple seeds.
-
-## 5. Ablations and failure interpretations
-
-Run only the ablations needed to explain causality:
-
-1. `beta=0` task-only control;
-2. frozen correctly conditioned prior;
-3. optional shuffled-prior or wrong-command control if the effect is ambiguous.
-
-A policy can exploit model error, stand still for high likelihood, or trade away
-task performance. These are failures even if the combined reward rises. A weak
-effect may instead mean the successful Demo A gait is already inside Demo F's
-high-likelihood region; that is a valid negative result and should be shown as
-such.
-
-## 6. Expected code layout
-
-```text
-demo_f/
-  dataset.py       session-safe retargeted crops
-  features.py      frozen offline/online 60-D feature contract
-  models.py        independently tunable conditional motion model
-  train.py         tokenizer + predictor training
-  evaluate.py      likelihood, intervention, rollout, and contact gates
-  export_jax.py    frozen scorer for Demo G
-
-demo_g/
-  config.py        command grid, beta, budget, and acceptance gates
-  env.py           Demo A Fetch task plus causal frozen-prior wrapper
-  prior.py         inference-only Demo F scorer
-  train.py         paired G0/G1 PPO entry point
-  evaluate.py      functional and distributional metrics
-  render.py        synchronized G0/G1 videos
-  tests/           feature parity, reset, command, beta-zero, export tests
+env -u LD_LIBRARY_PATH uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax[cuda12]==0.4.30' \
+  --with 'jaxlib==0.4.30' --with scipy \
+  python -m demo_g.train --arm g1 --seed 0
 ```
 
-Only the plan is created now. Demo G implementation starts after the retargeting
-and Demo F model gates pass, so PPO cannot hide a bad data transform.
+Measured `ppo.train` time includes compilation and three evaluations, but not
+Python/uv startup:
+
+| training seed | G0 task only | G1 + prior | sequential pair |
+|---:|---:|---:|---:|
+| 0 | 58.4 s | 68.8 s | 127.2 s |
+| 1 | 59.8 s | 69.5 s | 129.3 s |
+| 2 | 57.8 s | 68.0 s | 125.8 s |
+
+Every arm is below two minutes; a matched pair is about 2.1 minutes on the
+current workshop GPU.
+
+## Shaping-disabled evaluation
+
+Evaluation runs both policies with identical random keys, disables shaping,
+and scores only the motion they actually produce. Five rollout seeds are paired
+for each of three policy-training seeds. CPU evaluation is intentional because
+the identity-checkpoint control is exactly zero there.
+
+```bash
+env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu \
+  uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax==0.4.30' \
+  --with 'jaxlib==0.4.30' --with scipy \
+  python -m demo_g.evaluate \
+  --g0 demo_g/out/g0_seed0_20260720-192221.pkl \
+  --g1 demo_g/out/g1_seed0_20260720-192952.pkl \
+  --output demo_g/out/evaluation_dynamic_seed0.json
+
+uv run --extra workshop python -m demo_g.summarize
+```
+
+The multiseed result is:
+
+| training seed | raw log-p improvement | paired wins | direct composite | tracking retained | survival |
+|---:|---:|---:|---:|---:|---:|
+| 0 | +18.11 | 5/5 | +5.78 (5/5) | 100.15% | 100% |
+| 1 | +32.76 | 5/5 | +3.66 (5/5) | 100.58% | 100% |
+| 2 | +17.28 | 5/5 | -0.30 (0/5) | 100.15% | 100% |
+
+Across training seeds, raw likelihood improves by `22.72 ± 7.11`, is positive
+in 3/3 seeds, and exceeds two between-seed standard deviations. Mean task
+return changes by +0.58%; task tracking and survival are retained in every
+seed. The nine-measure direct composite improves by `3.05 ± 2.52`, but only in
+2/3 seeds.
+
+Direct distance-to-reference improvements are:
+
+| measure | mean improvement | seeds improved |
+|---|---:|---:|
+| airborne fraction | +0.036 | 3/3 |
+| stance-foot speed | +0.673 | 3/3 |
+| approximate stance-world foot speed | +0.701 | 3/3 |
+| joint-speed RMS | +0.200 | 3/3 |
+| duty factor | +0.087 | 2/3 |
+| maximum flight duration | +0.004 | 2/3 |
+| contact-switch frequency | +3.757 | 2/3 |
+| vertical-acceleration RMS | +0.435 | 2/3 |
+| cyclicity | -0.045 | 0/3 |
+
+The accepted claim is therefore limited: the frozen data score improves
+robustly while function is preserved, and four direct measures support a
+behavioral shift. The complete gait metric is not robust, and cyclicity moves
+away from the reference in every seed.
+
+## Best-performing checkpoint and failure inspection
+
+Seed 0 is selected for presentation because it passes every single-seed gate
+and has the largest direct-composite improvement, not because it has the largest
+learned-likelihood gain. G1 changes these representative means:
+
+| measure | G0 | G1 | held-out motion |
+|---|---:|---:|---:|
+| speed RMSE | 0.0299 | 0.0243 | 0 |
+| action energy | 0.120 | 0.041 | — |
+| duty factor | 0.358 | 0.491 | 0.694 |
+| airborne fraction | 10.0% | 5.4% | 0.47% |
+| contact switches | 11.48 Hz | 3.11 Hz | 0.77 Hz |
+| approximate stance-world foot speed | 1.92 | 0.75 | 0.36 |
+| vertical acceleration | 1.78 g | 0.91 g | 0.053 g |
+| cyclicity | 0.877 | 0.759 | 0.913 |
+
+The largest remaining failures are physically meaningful: maximum continuous
+flight grows from 0.032 to 0.060 s, vertical acceleration remains far above the
+retargeted reference, and the policy is visibly crouched. Do not describe it as
+literal rodent biomechanics.
+
+Local, gitignored inspection artifacts are:
+
+- `demo_g/out/dynamic_videos/seed0_g0_task_only.mp4`;
+- `demo_g/out/dynamic_videos/seed0_g1_motion_prior.mp4`;
+- `demo_g/out/dynamic_videos/seed0_g0_vs_g1.mp4`;
+- `demo_g/out/dynamic_videos/seed0_trace.png`.
+
+Recreate them with `python -m demo_g.render` and `python -m demo_g.diagnose`
+using the seed-0 checkpoints shown above.
+
+## Permanent checks
+
+```bash
+uv run --extra workshop pytest -q demo_f/tests \
+  demo_g/tests/test_features.py demo_g/tests/test_prior.py \
+  demo_g/tests/test_evaluate.py
+
+env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu \
+  uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax==0.4.30' \
+  --with 'jaxlib==0.4.30' --with 'pytest>=8' --with scipy \
+  python -m pytest -q demo_g/tests/test_env.py
+```
+
+## Layout
+
+```text
+config.py       frozen beta, calibration, cadence, and PPO budget
+features.py     pure-JAX form of Demo F's 60-D contract
+prior.py        frozen encoder, Transformer, and Gaussian score
+env.py          Demo A task plus causal feature collection
+wrappers.py     batch-level scoring and reset-safe history
+train.py        shared matched-arm PPO entry point
+metrics.py      direct gait/contact/acceleration statistics
+evaluate.py     paired shaping-disabled evaluation
+summarize.py    three-training-seed acceptance report
+render.py       individual and side-by-side videos
+diagnose.py     time-varying speed/contact/likelihood traces
+experiment/     append-only decisions and measured gates
+```
+
+See [`ref/docs/demo_g.md`](../ref/docs/demo_g.md) for the workshop-facing
+version and [`ref/docs/WORKSHOP_PLAN.md`](../ref/docs/WORKSHOP_PLAN.md) for the
+full teaching arc.

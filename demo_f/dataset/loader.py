@@ -16,11 +16,44 @@ from ..features import trajectory_features
 class FetchMotionSet:
     features: np.ndarray
     command: np.ndarray
+    root_position: np.ndarray
+    root_quaternion: np.ndarray
     session_index: np.ndarray
     source_start: np.ndarray
     source_speed_mps: np.ndarray
     source_path_speed_mps: np.ndarray
     sessions: tuple[str, ...]
+
+
+def hindsight_commands(
+    root_position: np.ndarray,
+    root_quaternion: np.ndarray,
+    start_frames: np.ndarray,
+    horizon_frames: int,
+) -> np.ndarray:
+    """Construct egocentric displacement commands at several causal anchors."""
+
+    root_position = np.asarray(root_position, np.float32)
+    quaternion = np.asarray(root_quaternion, np.float32)
+    start = np.asarray(start_frames, np.int64)
+    future = start + int(horizon_frames)
+    if start.ndim != 1 or start.min() < 0 or future.max() >= root_position.shape[1]:
+        raise ValueError("command windows exceed the stored trajectory")
+    w, x, y, z = np.moveaxis(quaternion, -1, 0)
+    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    origin = root_position[:, start, :2]
+    delta = root_position[:, future, :2] - origin
+    heading = yaw[:, start]
+    cosine, sine = np.cos(-heading), np.sin(-heading)
+    turn = (yaw[:, future] - heading + np.pi) % (2 * np.pi) - np.pi
+    return np.stack(
+        (
+            cosine * delta[..., 0] - sine * delta[..., 1],
+            sine * delta[..., 0] + cosine * delta[..., 1],
+            turn,
+        ),
+        axis=-1,
+    ).astype(np.float32)
 
 
 def download_dataset(root: Path = DEFAULT_ROOT) -> Path:
@@ -63,8 +96,8 @@ def load_split(
     rows = [row for row in manifest["sessions"] if row["split"] == split]
     if not rows:
         raise ValueError(f"release has no {split!r} rows")
-    features, commands, starts, speeds, path_speeds, indices, sessions = (
-        [], [], [], [], [], [], []
+    features, commands, roots, quaternions, starts, speeds, path_speeds, indices, sessions = (
+        [], [], [], [], [], [], [], [], []
     )
     for session_index, row in enumerate(rows):
         with np.load(root / row["shard"]) as shard:
@@ -78,6 +111,8 @@ def load_split(
             count = len(feature)
             features.append(feature)
             commands.append(shard["command"].astype(np.float32))
+            roots.append(shard["root_position"].astype(np.float32))
+            quaternions.append(shard["root_quaternion"].astype(np.float32))
             starts.append(shard["source_start"].astype(np.int32))
             speeds.append(shard["source_speed_mps"].astype(np.float32))
             path_speeds.append(shard["source_path_speed_mps"].astype(np.float32))
@@ -86,6 +121,8 @@ def load_split(
     return FetchMotionSet(
         features=np.concatenate(features),
         command=np.concatenate(commands),
+        root_position=np.concatenate(roots),
+        root_quaternion=np.concatenate(quaternions),
         session_index=np.concatenate(indices),
         source_start=np.concatenate(starts),
         source_speed_mps=np.concatenate(speeds),

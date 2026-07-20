@@ -21,7 +21,7 @@ import torch
 
 from .config import FPS, JOINT_LIMIT, OUT, PriorConfig
 from .dataset import load_manifest, load_split
-from .dataset.contract import COMMAND_FRAME, COMMAND_FUTURE_FRAME, DEFAULT_ROOT
+from .dataset.contract import COMMAND_FRAME, COMMAND_FUTURE_FRAME, DYNAMIC_ROOT
 from .features import FEATURE_DIM, SL
 from .models import ConditionalTransformer, MotionAutoencoder
 
@@ -60,6 +60,35 @@ def command_scale(command: np.ndarray, source_speed: np.ndarray) -> float:
     return float(np.median(command[mask, 0] / source_speed[mask]))
 
 
+def dataset_command_calibration(
+    manifest: dict,
+    command: np.ndarray,
+    source_speed: np.ndarray,
+) -> dict:
+    """Resolve the declared source-speed-to-command map for one release."""
+
+    dynamic = manifest.get("dynamic_scaling")
+    if dynamic is not None:
+        scale = float(dynamic["velocity_scale"]) * COMMAND_HORIZON_SECONDS
+        return {
+            "method": "declared Froude-similar velocity scale times command horizon",
+            "fetch_displacement_per_mps": scale,
+            "horizon_seconds": COMMAND_HORIZON_SECONDS,
+        }
+    return {
+        "method": "median forward Fetch displacement / source net speed on straight train clips",
+        "fetch_displacement_per_mps": command_scale(command, source_speed),
+        "horizon_seconds": COMMAND_HORIZON_SECONDS,
+    }
+
+
+def checkpoint_command_scale(checkpoint: dict, train) -> float:
+    calibration = checkpoint.get("command_calibration")
+    if calibration is not None:
+        return float(calibration["fetch_displacement_per_mps"])
+    return command_scale(train.command, train.source_speed_mps)
+
+
 def select_seed(dataset, target_speed: float = 0.15) -> int:
     """Choose one fixed, nearly straight on-manifold history for every command."""
 
@@ -75,7 +104,7 @@ def select_seed(dataset, target_speed: float = 0.15) -> int:
 
 def load_prior(checkpoint_path: Path):
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    if checkpoint.get("schema") != "demo-f-prior-v1":
+    if checkpoint.get("schema") not in {"demo-f-prior-v1", "demo-f-prior-v2"}:
         raise ValueError(f"unsupported checkpoint schema {checkpoint.get('schema')!r}")
     config = PriorConfig(**checkpoint["config"])
     tokenizer = MotionAutoencoder(
@@ -105,17 +134,11 @@ def rollout_features(
     tokenizer: MotionAutoencoder,
     predictor: ConditionalTransformer,
 ) -> np.ndarray:
-    """Roll deterministic means with one-token receding-horizon advances.
+    """Roll deterministic means one token at a time and decode continuously."""
 
-    The predictor proposes eight future tokens because that is its training
-    objective.  Advancing all eight at once makes the 32-frame training window
-    visible as a stop/start rhythm.  We retain the first proposal, shift the
-    history by one token, and re-plan.  The complete token stream is decoded in
-    one pass so the convolutional decoder never resets at a chunk boundary.
-    """
-
-    if frames <= COMMAND_FRAME:
-        raise ValueError(f"frames must exceed the {COMMAND_FRAME}-frame seed")
+    seed_frames = config.history_tokens * config.downsample
+    if frames <= seed_frames:
+        raise ValueError(f"frames must exceed the {seed_frames}-frame seed")
     mean = torch.as_tensor(checkpoint["feature_mean"], device=DEVICE)
     std = torch.as_tensor(checkpoint["feature_std"], device=DEVICE)
     token_mean = torch.as_tensor(checkpoint["token_mean"], device=DEVICE)
@@ -126,6 +149,10 @@ def rollout_features(
     seed_tokens = tokenizer.encode(normalized[None])
     history = ((seed_tokens - token_mean) / token_std)[:, :config.history_tokens]
     command_tensor = torch.as_tensor(command, dtype=torch.float32, device=DEVICE)[None]
+    if "command_mean" in checkpoint:
+        command_mean = torch.as_tensor(checkpoint["command_mean"], device=DEVICE)
+        command_std = torch.as_tensor(checkpoint["command_std"], device=DEVICE)
+        command_tensor = (command_tensor - command_mean) / command_std
 
     target_tokens = math.ceil(frames / config.downsample)
     stream = [history]
@@ -217,7 +244,7 @@ def plot_speed_traces(traces: list[dict], output: Path) -> None:
             label=f"{SPEED_SMOOTHING_FRAMES / FPS:.2f} s trailing mean",
         )
         axis.axhline(requested, color="#e06e8f", linestyle="--", linewidth=1.2, label="request")
-        axis.axvline(COMMAND_FRAME / FPS, color="#777", linestyle=":", linewidth=1.0)
+        axis.axvline(trace["seed_frames"] / FPS, color="#777", linestyle=":", linewidth=1.0)
         axis.set_title(
             f"request {requested:.2f} m/s | low-speed dwell {trace['pause_fraction']:.0%}"
         )
@@ -238,7 +265,7 @@ def plot_speed_traces(traces: list[dict], output: Path) -> None:
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, default=OUT / "prior.pt")
-    parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--dataset-root", type=Path, default=DYNAMIC_ROOT)
     parser.add_argument("--output-dir", type=Path, default=OUT / "generated")
     parser.add_argument("--speeds", type=float, nargs="+", default=DEFAULT_SPEEDS)
     parser.add_argument("--seconds", type=float, default=4.0)
@@ -257,7 +284,7 @@ def main():
         raise ValueError("checkpoint was not trained from this dataset manifest")
 
     train = load_split("train", args.dataset_root)
-    scale = command_scale(train.command, train.source_speed_mps)
+    scale = checkpoint_command_scale(checkpoint, train)
     seed_index = select_seed(train, args.seed_speed)
     seed_session = train.sessions[int(train.session_index[seed_index])]
     seed_start = int(train.source_start[seed_index])
@@ -281,13 +308,14 @@ def main():
             tokenizer,
             predictor,
         )
+        seed_frames = config.history_tokens * config.downsample
         angles, root, quaternion = integrate_root(features)
-        generated_root = root[COMMAND_FRAME:]
+        generated_root = root[seed_frames:]
         generated_path_speed = float(
             np.linalg.norm(np.diff(generated_root[:, :2], axis=0), axis=1).mean() * FPS
         )
         generated_forward_speed = float(
-            features[COMMAND_FRAME:, SL["root_velocity"][0]].mean()
+            features[seed_frames:, SL["root_velocity"][0]].mean()
         )
         equivalent_speed = generated_path_speed * COMMAND_HORIZON_SECONDS / scale
         instantaneous_fetch_speed = np.zeros(frames, np.float32)
@@ -300,7 +328,7 @@ def main():
         smoothed_equivalent_speed = trailing_mean(instantaneous_equivalent_speed)
         joint_activity = np.zeros(frames, np.float32)
         joint_activity[1:] = np.mean(np.abs(np.diff(angles, axis=0)), axis=1) * FPS
-        evaluation_start = COMMAND_FRAME + SPEED_SMOOTHING_FRAMES
+        evaluation_start = seed_frames + SPEED_SMOOTHING_FRAMES
         evaluated_speed = smoothed_equivalent_speed[evaluation_start:]
         low_speed = evaluated_speed < 0.25 * requested_speed
         pause_fraction = float(np.mean(low_speed))
@@ -309,24 +337,28 @@ def main():
         # The previous visualizer reset at these 32-frame boundaries. Ratios near
         # one (or above) demonstrate that the new rollout does not systematically
         # pause at the obsolete boundary locations.
-        old_boundaries = np.arange(2 * COMMAND_FRAME, frames, COMMAND_FRAME)
-        boundary_index = np.unique(
-            np.concatenate(
-                [
-                    np.arange(max(evaluation_start, frame - 2), min(frames, frame + 3))
-                    for frame in old_boundaries
-                ]
+        old_boundaries = np.arange(seed_frames + COMMAND_FRAME, frames, COMMAND_FRAME)
+        if len(old_boundaries):
+            boundary_index = np.unique(
+                np.concatenate(
+                    [
+                        np.arange(max(evaluation_start, frame - 2), min(frames, frame + 3))
+                        for frame in old_boundaries
+                    ]
+                )
             )
-        )
-        post_seed_index = np.arange(evaluation_start, frames)
-        ordinary_index = post_seed_index[~np.isin(post_seed_index, boundary_index)]
-        boundary_speed_ratio = float(
-            smoothed_equivalent_speed[boundary_index].mean()
-            / smoothed_equivalent_speed[ordinary_index].mean()
-        )
-        boundary_joint_activity_ratio = float(
-            joint_activity[boundary_index].mean() / joint_activity[ordinary_index].mean()
-        )
+            post_seed_index = np.arange(evaluation_start, frames)
+            ordinary_index = post_seed_index[~np.isin(post_seed_index, boundary_index)]
+            boundary_speed_ratio = float(
+                smoothed_equivalent_speed[boundary_index].mean()
+                / smoothed_equivalent_speed[ordinary_index].mean()
+            )
+            boundary_joint_activity_ratio = float(
+                joint_activity[boundary_index].mean() / joint_activity[ordinary_index].mean()
+            )
+        else:
+            boundary_speed_ratio = math.nan
+            boundary_joint_activity_ratio = math.nan
         saturation = float((np.abs(angles) >= JOINT_LIMIT - 1e-6).mean())
         label = f"speed_{int(round(requested_speed * 100)):03d}"
         artifact = args.output_dir / f"{label}.npz"
@@ -376,6 +408,7 @@ def main():
                 "joint_activity": joint_activity,
                 "root_height": root[:, 2],
                 "pause_fraction": pause_fraction,
+                "seed_frames": seed_frames,
             }
         )
         print(
@@ -391,11 +424,14 @@ def main():
         "checkpoint": str(args.checkpoint),
         "checkpoint_sha256": checkpoint_hash,
         "dataset_repository_id": manifest["repository_id"],
-        "command_calibration": {
-            "method": "median forward Fetch displacement / source net speed on straight train clips",
-            "fetch_displacement_per_mps": scale,
-            "horizon_seconds": COMMAND_HORIZON_SECONDS,
-        },
+        "command_calibration": checkpoint.get(
+            "command_calibration",
+            {
+                "method": "legacy empirical calibration",
+                "fetch_displacement_per_mps": scale,
+                "horizon_seconds": COMMAND_HORIZON_SECONDS,
+            },
+        ),
         "seed": {
             "session": seed_session,
             "source_start": seed_start,
@@ -404,6 +440,7 @@ def main():
         },
         "rollout": "deterministic conditional Gaussian mean; one-token receding horizon",
         "frames": frames,
+        "seed_frames": config.history_tokens * config.downsample,
         "fps": FPS,
         "videos": rows,
     }

@@ -15,11 +15,15 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .config import OUT, PriorConfig
+from .config import JOINT_LIMIT, OUT, PriorConfig
 from .dataset import load_manifest, load_split
-from .dataset.contract import DEFAULT_ROOT
+from .dataset.contract import DYNAMIC_ROOT
 from .features import FEATURE_DIM
+from .features import SL
+from .evaluate import rollout_report
+from .generate import dataset_command_calibration
 from .models import ConditionalTransformer, MotionAutoencoder
+from .windows import encode_in_batches, predictor_windows
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -46,35 +50,69 @@ def batches(values: torch.Tensor, size: int, generator: torch.Generator):
     return values[index]
 
 
-@torch.inference_mode()
-def encode(model, values: torch.Tensor, batch_size: int = 512) -> torch.Tensor:
-    return torch.cat(
-        [model.encode(values[offset:offset + batch_size]) for offset in range(0, len(values), batch_size)]
+def joint_limit_loss(
+    normalized_features: torch.Tensor,
+    feature_mean: torch.Tensor,
+    feature_std: torch.Tensor,
+    *,
+    margin: float = 0.95,
+) -> torch.Tensor:
+    """Penalize decoded joint angles before they reach Fetch's hard limits.
+
+    The margin leaves a small buffer for autoregressive rollout error.  This is
+    a training loss only: evaluation still measures the unmodified generated
+    motion against the original +/-60 degree contract.
+    """
+
+    joint_slice = slice(*SL["joint_angles"])
+    angles = (
+        normalized_features[..., joint_slice] * feature_std[joint_slice]
+        + feature_mean[joint_slice]
     )
+    excess = torch.relu(angles.abs() - margin * JOINT_LIMIT)
+    return excess.square().mean()
 
 
 @torch.inference_mode()
 def prediction_mse(
     model: ConditionalTransformer,
-    tokens: torch.Tensor,
+    history: torch.Tensor,
+    future: torch.Tensor,
     command: torch.Tensor,
-    config: PriorConfig,
 ) -> float:
-    history = tokens[:, :config.history_tokens]
-    future = tokens[:, config.history_tokens:config.history_tokens + config.future_tokens]
     return F.mse_loss(model.predict(history, command), future).item()
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--dataset-root", type=Path, default=DYNAMIC_ROOT)
     parser.add_argument("--output", type=Path, default=OUT / "prior.pt")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--history-tokens", type=int, default=PriorConfig.history_tokens)
+    parser.add_argument("--future-tokens", type=int, default=PriorConfig.future_tokens)
+    parser.add_argument("--latent-dim", type=int, default=PriorConfig.latent_dim)
+    parser.add_argument("--learning-rate", type=float, default=PriorConfig.learning_rate)
+    parser.add_argument(
+        "--joint-limit-penalty",
+        type=float,
+        default=PriorConfig.joint_limit_penalty,
+    )
+    parser.add_argument(
+        "--training-rollout-tokens",
+        type=int,
+        default=PriorConfig.training_rollout_tokens,
+    )
     parser.add_argument("--tokenizer-steps", type=int, default=PriorConfig.tokenizer_steps)
     parser.add_argument("--predictor-steps", type=int, default=PriorConfig.predictor_steps)
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     config = PriorConfig(
+        history_tokens=args.history_tokens,
+        future_tokens=args.future_tokens,
+        latent_dim=args.latent_dim,
+        learning_rate=args.learning_rate,
+        joint_limit_penalty=args.joint_limit_penalty,
+        training_rollout_tokens=args.training_rollout_tokens,
         tokenizer_steps=20 if args.smoke else args.tokenizer_steps,
         predictor_steps=20 if args.smoke else args.predictor_steps,
     )
@@ -82,6 +120,9 @@ def main():
     manifest = load_manifest(args.dataset_root)
     train = load_split("train", args.dataset_root)
     validation = load_split("validation", args.dataset_root)
+    command_calibration = dataset_command_calibration(
+        manifest, train.command, train.source_speed_mps
+    )
     print(
         f"dataset schema {manifest['schema_version']} | train={len(train.features):,} "
         f"validation={len(validation.features):,} | device={DEVICE}",
@@ -93,8 +134,8 @@ def main():
     std = np.maximum(std, 1e-4)
     train_features = torch.from_numpy((train.features - mean) / std).to(DEVICE)
     validation_features = torch.from_numpy((validation.features - mean) / std).to(DEVICE)
-    train_command = torch.from_numpy(train.command).to(DEVICE)
-    validation_command = torch.from_numpy(validation.command).to(DEVICE)
+    feature_mean = torch.from_numpy(mean).to(DEVICE)
+    feature_std = torch.from_numpy(std).to(DEVICE)
     generator = torch.Generator(device=DEVICE).manual_seed(args.seed)
 
     tokenizer = MotionAutoencoder(
@@ -105,13 +146,20 @@ def main():
     tokenizer.train()
     for step in range(config.tokenizer_steps):
         target = batches(train_features, config.tokenizer_batch_size, generator)
-        loss = F.smooth_l1_loss(tokenizer(target), target)
+        reconstruction = tokenizer(target)
+        reconstruction_loss = F.smooth_l1_loss(reconstruction, target)
+        safety_loss = joint_limit_loss(reconstruction, feature_mean, feature_std)
+        loss = reconstruction_loss + config.joint_limit_penalty * safety_loss
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(tokenizer.parameters(), 1.0)
         optimizer.step()
         if step == 0 or (step + 1) % 250 == 0 or step + 1 == config.tokenizer_steps:
-            print(f"[tokenizer] {step + 1:4d}/{config.tokenizer_steps} loss={loss.item():.5f}", flush=True)
+            print(
+                f"[tokenizer] {step + 1:4d}/{config.tokenizer_steps} "
+                f"loss={loss.item():.5f} safety={safety_loss.item():.6f}",
+                flush=True,
+            )
 
     tokenizer.eval()
     with torch.inference_mode():
@@ -121,12 +169,35 @@ def main():
         tokenizer_validation_loss = F.smooth_l1_loss(
             tokenizer(validation_features), validation_features
         ).item()
-    train_tokens = encode(tokenizer, train_features)
-    validation_tokens = encode(tokenizer, validation_features)
+    train_tokens = encode_in_batches(tokenizer, train_features)
+    validation_tokens = encode_in_batches(tokenizer, validation_features)
     token_mean = train_tokens.mean(dim=(0, 1))
     token_std = train_tokens.std(dim=(0, 1)).clamp_min(1e-4)
     train_tokens = (train_tokens - token_mean) / token_std
     validation_tokens = (validation_tokens - token_mean) / token_std
+    tokenizer.requires_grad_(False)
+    train_history, train_future, train_command, train_anchors = predictor_windows(
+        train_tokens,
+        train,
+        config,
+        target_tokens=config.training_rollout_tokens,
+    )
+    validation_history, validation_future, validation_command, validation_anchors = (
+        predictor_windows(validation_tokens, validation, config)
+    )
+    command_mean = train_command.mean(dim=0)
+    command_std = train_command.std(dim=0).clamp_min(1e-4)
+    train_command = (train_command - command_mean) / command_std
+    validation_command = (validation_command - command_mean) / command_std
+    validation_persistence_mse = F.mse_loss(
+        validation_history[:, -1:, :].expand_as(validation_future),
+        validation_future,
+    ).item()
+    print(
+        f"predictor windows: train={len(train_history):,} validation={len(validation_history):,} "
+        f"anchors={train_anchors.tolist()}",
+        flush=True,
+    )
 
     predictor = ConditionalTransformer(
         latent_dim=config.latent_dim,
@@ -136,24 +207,42 @@ def main():
         heads=config.transformer_heads,
     ).to(DEVICE)
     optimizer = torch.optim.AdamW(predictor.parameters(), lr=config.learning_rate)
+    best_rollout_objective = float("inf")
     best_validation_mse = float("inf")
     best_predictor_step = 0
     best_predictor_state = None
     predictor.train()
     for step in range(config.predictor_steps):
         index = torch.randint(
-            len(train_tokens),
+            len(train_history),
             (config.predictor_batch_size,),
             device=DEVICE,
             generator=generator,
         )
-        history = train_tokens[index, :config.history_tokens]
-        future = train_tokens[
-            index,
-            config.history_tokens:config.history_tokens + config.future_tokens,
+        history = train_history[index]
+        future = train_future[index]
+        rollout_history = history
+        rollout_predictions = []
+        for _ in range(config.training_rollout_tokens):
+            next_token = predictor.predict(
+                rollout_history, train_command[index]
+            )[:, :1]
+            rollout_predictions.append(next_token)
+            rollout_history = torch.cat((rollout_history, next_token), dim=1)[
+                :, -config.history_tokens :
+            ]
+        prediction = torch.cat(rollout_predictions, dim=1)
+        prediction_loss = F.mse_loss(prediction, future)
+        decoded_stream = tokenizer.decode(
+            torch.cat((history, prediction), dim=1) * token_std + token_mean
+        )
+        decoded_prediction = decoded_stream[
+            :, -config.training_rollout_tokens * config.downsample :
         ]
-        prediction = predictor.predict(history, train_command[index])
-        loss = F.mse_loss(prediction, future)
+        safety_loss = joint_limit_loss(
+            decoded_prediction, feature_mean, feature_std
+        )
+        loss = prediction_loss + config.joint_limit_penalty * safety_loss
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
@@ -164,25 +253,48 @@ def main():
             or completed == config.predictor_steps
         )
         validation_at_step = None
+        rollout_at_step = None
         if validate:
             predictor.eval()
             validation_at_step = prediction_mse(
-                predictor, validation_tokens, validation_command, config
+                predictor, validation_history, validation_future, validation_command
             )
-            if validation_at_step < best_validation_mse:
+            selection_checkpoint = {
+                "config": asdict(config),
+                "feature_mean": mean,
+                "feature_std": std,
+                "token_mean": token_mean.detach().cpu().numpy(),
+                "token_std": token_std.detach().cpu().numpy(),
+                "command_mean": command_mean.detach().cpu().numpy(),
+                "command_std": command_std.detach().cpu().numpy(),
+                "command_calibration": command_calibration,
+            }
+            rollout_at_step = rollout_report(
+                selection_checkpoint,
+                config,
+                tokenizer,
+                predictor,
+                train,
+                validation,
+            )["objective"]
+            if (
+                validation_at_step < validation_persistence_mse
+                and rollout_at_step < best_rollout_objective
+            ):
+                best_rollout_objective = rollout_at_step
                 best_validation_mse = validation_at_step
                 best_predictor_step = completed
                 best_predictor_state = copy.deepcopy(predictor.state_dict())
             predictor.train()
         if step == 0 or completed % 250 == 0 or completed == config.predictor_steps:
             suffix = (
-                f" val={validation_at_step:.5f}"
+                f" val={validation_at_step:.5f} rollout={rollout_at_step:.4f}"
                 if validation_at_step is not None
                 else ""
             )
             print(
                 f"[predictor] {completed:4d}/{config.predictor_steps} "
-                f"loss={loss.item():.5f}{suffix}",
+                f"loss={loss.item():.5f} safety={safety_loss.item():.6f}{suffix}",
                 flush=True,
             )
 
@@ -191,32 +303,33 @@ def main():
     predictor.load_state_dict(best_predictor_state)
     predictor.eval()
     with torch.inference_mode():
-        history = validation_tokens[:, :config.history_tokens]
-        future = validation_tokens[
-            :, config.history_tokens:config.history_tokens + config.future_tokens
-        ]
-        prediction = predictor.predict(history, validation_command)
-        validation_mse = F.mse_loss(prediction, future).item()
-        persistence_mse = F.mse_loss(
-            history[:, -1:, :].expand_as(future), future
-        ).item()
-        sigma = float(torch.sqrt(F.mse_loss(prediction, future)).clamp_min(1e-3))
-        own = ((prediction - future) ** 2).mean(dim=(1, 2))
-        shuffled_prediction = predictor.predict(history, validation_command.flip(0))
-        shuffled = ((shuffled_prediction - future) ** 2).mean(dim=(1, 2))
+        prediction = predictor.predict(validation_history, validation_command)
+        validation_mse = F.mse_loss(prediction, validation_future).item()
+        persistence_mse = validation_persistence_mse
+        sigma = float(torch.sqrt(F.mse_loss(prediction, validation_future)).clamp_min(1e-3))
+        own = ((prediction - validation_future) ** 2).mean(dim=(1, 2))
+        shuffled_prediction = predictor.predict(
+            validation_history, validation_command.flip(0)
+        )
+        shuffled = ((shuffled_prediction - validation_future) ** 2).mean(dim=(1, 2))
         command_win_rate = float((own < shuffled).float().mean())
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     checkpoint = {
-        "schema": "demo-f-prior-v1",
+        "schema": "demo-f-prior-v2",
         "config": asdict(config),
         "seed": args.seed,
         "dataset_manifest_sha256": sha256(args.dataset_root / "manifest.json"),
         "dataset_repository_id": manifest["repository_id"],
+        "dataset_variant": manifest.get("variant", "kinematic-v1"),
+        "dynamic_scaling": manifest.get("dynamic_scaling"),
+        "command_calibration": command_calibration,
         "feature_mean": mean,
         "feature_std": std,
         "token_mean": token_mean.cpu().numpy(),
         "token_std": token_std.cpu().numpy(),
+        "command_mean": command_mean.cpu().numpy(),
+        "command_std": command_std.cpu().numpy(),
         "sigma": sigma,
         "tokenizer": tokenizer.state_dict(),
         "predictor": predictor.state_dict(),
@@ -226,7 +339,12 @@ def main():
             "validation_mse": validation_mse,
             "persistence_mse": persistence_mse,
             "command_vs_reversed_win_rate": command_win_rate,
+            "train_predictor_windows": len(train_history),
+            "validation_predictor_windows": len(validation_history),
+            "predictor_anchor_tokens": train_anchors.tolist(),
             "best_predictor_step": best_predictor_step,
+            "best_validation_selection_mse": best_validation_mse,
+            "best_rollout_objective": best_rollout_objective,
             "training_seconds": time.perf_counter() - started,
         },
     }
@@ -236,7 +354,7 @@ def main():
     print(
         f"validation mse={validation_mse:.5f} | persistence={persistence_mse:.5f} | "
         f"command win={command_win_rate:.1%} | best step={best_predictor_step} | "
-        f"sigma={sigma:.4f}",
+        f"rollout={best_rollout_objective:.4f} | sigma={sigma:.4f}",
         flush=True,
     )
     print(f"wrote {args.output}", flush=True)

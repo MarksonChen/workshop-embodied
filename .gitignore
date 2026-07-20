@@ -48,6 +48,10 @@ demo_e/out/
 # Demo F retarget renders, local releases, checkpoints, and reports
 demo_f/out/
 demo_f/dataset/release/
+demo_f/dataset/release_dynamic/
+
+# Demo G checkpoints, evaluation reports, plots, and videos
+demo_g/out/
 
 # Demo A run artifacts
 demo_a/runs/

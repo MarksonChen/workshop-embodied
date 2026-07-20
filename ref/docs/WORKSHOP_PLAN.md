@@ -1,309 +1,332 @@
-# Workshop experiment plan — SSL + RL for embodied neuroscience
+# Workshop plan — from RL and SSL to SSL-guided RL
 
-_Created 2026-07-18; revised for the three-demo A/B/E workshop on 2026-07-19.
-Companion to [PROJECT_STATE.md](PROJECT_STATE.md) and the detailed
-[Demo E plan](demo_e.md). Demos [C](demo_c.md) and [D](demo_d.md) are retained
-as research references, not presented in the core workshop._
+_Updated 2026-07-20 for the current Demo A/B/F/G workshop. Detailed pages:
+[Demo A](demo_a.md), [Demo B](demo_b.md), [Demo F](demo_f.md), and
+[Demo G](demo_g.md). Demos [C](demo_c.md), [D](demo_d.md), and
+[E](demo_e.md) remain research history rather than live material._
 
-Audience: new computational-neuroscience graduate students. Optimize for clear
-definitions, visible learning signals, and one honest controlled comparison.
+Audience: new computational-neuroscience graduate students. Optimize for
+definitions they can repeat accurately, short causal code paths, visible model
+behavior, and one honest controlled comparison.
 
-## 1. Thesis
+## 1. Teaching thesis
 
-SSL and RL provide complementary constraints:
+Self-supervised learning and reinforcement learning impose complementary
+constraints:
 
 | | self-supervised learning | reinforcement learning |
 |---|---|---|
-| realism | distributional: resemble patterns in recorded data | functional: cause useful outcomes in an environment |
-| source | data-driven targets constructed from the recording itself | task-driven scalar reward produced by interaction |
-| embodied loop | learned internal model of brain/body motion | body–environment action and consequence |
+| realism | distributional: resemble patterns in recorded data | functional: produce useful consequences |
+| supervision | construct targets from the data itself | receive a scalar reward from interaction |
+| emphasis | data-driven brain/body regularities | task-driven body/environment behavior |
 
-Their combination is the brain–body–environment story:
+The combined story is:
 
-> **A data-trained internal motion prior says what behavior is plausible; task
-> reward says what behavior works; PPO learns a physical policy constrained by
-> both.**
+> **SSL learns what motion is plausible from recorded behavior. RL learns what
+> motion works in an environment. SSL-guided RL asks one physical policy to
+> satisfy both constraints.**
 
-“Brain–body” is a computational interpretation in this workshop. Demo B uses
-real motion but no spikes, so the workshop does not claim that its network is a
-validated biological brain model.
-
-## 2. The three-demo arc
+Use the shorthand only after defining it:
 
 ```text
-distributional realism
-        ^
-        | Demo B: conditional motion model
-        |                Demo E: frozen motion likelihood + physical PPO
-        |
-        |                                      Demo A: task-reward PPO
-        +--------------------------------------------------------------> function
-
-        data only            data + interaction             interaction only
+SSL       = distributional realism = data-driven brain–body structure
+RL        = functional realism     = task-driven body–environment interaction
+SSL + RL  = both constraints       = brain–body–environment interaction
 ```
 
-The points are a teaching picture, not one controlled experiment: Demo A uses a
-Brax creature-like quadruped while B/E use the MIMIC skeletal rodent. The valid
-causal comparison is inside Demo E, where task-only and task+prior PPO differ by
-one frozen reward term.
+“Brain–body” is a computational interpretation. The workshop uses behavioral
+motion, not neural recordings, and makes no neural-similarity claim.
 
-Use one sentence to bridge every demo:
+## 2. Four-demo arc
 
-> **Demo A learns what works; Demo B learns what looks plausible; Demo E asks
-> one physical policy to do both.**
+```text
+recorded rodent motion
+        |
+        +--> Demo B: learn conditional rodent motion (teach SSL)
+        |
+        +--> retarget and dynamically rescale motion to Fetch
+                |
+                +--> Demo F: repeat conditional SSL on Fetch -- freeze --+
+                                                                          |
+Demo A: train Fetch from task reward (teach RL) ---------------------------+--> Demo G
+                                                                               task + prior PPO
+```
 
-## 3. Demo A — define reinforcement learning
+Say:
 
-Status: **complete in `demo_a/`; training is workshop-scale.**
+> **Demo A learns what works. Demo B learns what looks plausible. Demo F puts
+> that data knowledge onto Demo A's body and time scale. Demo G trains one
+> policy with both signals.**
 
-- Body/task: Brax v1 Fetch, a creature-like quadruped, trained either to reach a
-  target or sustain a forward speed.
-- Algorithm: standard PPO from random initialization.
-- Supervision: a scalar task consequence; there are no target actions.
-- Visible lesson: checkpoint deciles show behavior changing as expected return
-  rises.
-- Useful imperfection: task success does not guarantee a natural gait. The
-  difference between “works” and “resembles real motion” motivates Demo B.
+Demo F is an engineering bridge, not a third learning definition.
 
-Definition on the board:
+## 3. Start from the absolute basics of RL
+
+Introduce five objects before naming PPO:
+
+1. The **environment** contains the simulated body and world.
+2. The **observation** is the information given to the learner now.
+3. The **action** is the learner's motor output.
+4. The **reward** is one number measuring the action's consequence.
+5. The **policy** maps observations to a distribution over actions.
+
+Draw the loop:
+
+```text
+observation --> policy --> action --> environment
+      ^                                  |
+      +-------- next observation --------+
+                       + reward
+```
+
+Only then define return:
 
 \[
-\max_\pi\;\mathbb E_{\tau\sim\pi}\sum_t\gamma^t r_t^{\rm task}.
+G_t=r_t+\gamma r_{t+1}+\gamma^2r_{t+2}+\cdots,
+\qquad \max_\pi\mathbb E_{\tau\sim\pi}[G_0].
 \]
 
-Do not use Demo A as the neural or same-body baseline for Demo E; its body is
-different. Demo E trains its own beta-zero MIMIC-rodent control.
+Make three points explicit:
 
-## 4. Demo B — define self-supervised conditional learning
+- RL is not given the correct action as a label.
+- A delayed reward can change how likely an earlier action becomes.
+- High reward means behavior satisfies the written objective; it does not
+  automatically mean motion looks natural.
 
-Status: **complete in `demo_b/`, including the frozen likelihood interface used
-by Demo E.**
+Introduce PPO operationally: collect rollouts, estimate which sampled actions
+produced better-than-expected return, update without one excessively large
+policy step, and repeat. Keep the clipped-surrogate derivation optional.
 
-- Data/body: the behaviorally validated strict-locomotion subset of the first
-  eight Coltrane sessions, expressed in the 74-coordinate MIMIC skeletal
-  contract with the original 281-D motion representation.
-- Tokenizer: a causal convolutional MotionVAE converts 50 Hz motion into 16-D
-  tokens at 12.5 Hz.
-- Conditional predictor: a standard Transformer reads eight past tokens and an
-  egocentric motion command and predicts future tokens.
-- Target construction: shift the same continuous recording forward; no behavior
-  label, action label, task reward, or environment interaction is required.
-- Artifact: reconstruct, generate, and steer a kinematic rat; it can look like a
-  locomotor trajectory without solving contact-rich physical control.
+## 4. Demo A — reinforcement learning on Fetch
 
-Definition on the board:
+Status: **implemented in `demo_a/`.**
+
+Use the unmodified ten-actuator Brax v1 Fetch body. `FetchRun` rewards forward
+speed, upright posture, and modest control effort:
+
+\[
+r_t^{\rm task}
+=\exp\left(-\frac{(v_x-v^*)^2}{2\sigma^2}\right)
++0.1u_z-10^{-3}\lVert a_t\rVert^2.
+\]
+
+Terminate when the torso is too low or upside down. Keep the standard 101-D
+observation and train PPO from random initialization. Use `v*=3` for the
+standalone Demo A locomotion demonstration. Demo G reuses exactly this task
+class and optimizer but chooses a slower, data-aligned target.
+
+The transition-matched 30M task-only arms used in Demo G train in 58–60 seconds
+inside `ppo.train`. This gives a live RL example comfortably inside five
+minutes.
+
+## 5. Demo B — self-supervised conditional rodent motion
+
+Status: **implemented in `demo_b/`; the Coltrane generator is behaviorally
+accepted.**
+
+Show a continuous recording. Choose past motion `h`, shift that recording to
+obtain future `w`, and compute a hindsight displacement command `c` from the
+future. The recording supplies input and target:
 
 \[
 \max_\phi\;\mathbb E_{(h,c,w)\sim\mathcal D}
 \log p_\phi(w\mid h,c).
 \]
 
-The current MSE transition already has the simplest probabilistic reading:
+There are no action labels, rewards, or environment interactions. This is the
+workshop's definition of self-supervised learning.
+
+The causal convolutional tokenizer and conditional Transformer predict future
+tokens from past tokens plus command. Explain its fixed-variance Gaussian view:
 
 \[
-p_\phi(w\mid h,c)=\mathcal N(w;\mu_\phi(h,c),\sigma^2I).
+\log p_\phi(w\mid h,c)
+=-\frac12\operatorname{mean}_i\left[
+\left(\frac{w_i-\mu_{\phi,i}}{\sigma}\right)^2
++2\log\sigma+\log(2\pi)\right].
 \]
 
-Demo B exposes `log_prob_next` and freezes a training-residual `sigma`. This
-makes the bridge to Demo E one line rather than introducing a discriminator or
-a second generative architecture. The exact feature/split changes, measured
-eligibility results, and acceptance gates are in [demo_e.md](demo_e.md).
+With fixed `sigma`, maximizing this likelihood is minimizing normalized MSE.
+Render kinematic rodent motion at multiple commands. State that generation is a
+learned motion distribution, not physical control.
 
-## 5. Demo E — combine the two signals
+## 6. Demo F — retarget, rescale, and repeat SSL
 
-Status: **pipeline-v6 is implemented in `demo_e/`; its replicated conditional
-prior passes the frozen source and physical-transfer gates, but no paired E0/E1
-result has passed the behavioral gates.** The first ten-minute E1 diagnostic
-learns an upright two-legged stance rather than locomotion. The canonical
-specification and measurements are in [demo_e.md](demo_e.md).
+Status: **implemented and accepted in `demo_f/`.**
 
-### Task
-
-Use MIMIC-MJX `RodentJoystick`: track commanded forward velocity and yaw rate in
-physics with the skeletal rodent. A standard PPO policy observes the flattened
-56-D task state and emits a 16-D intention. The published TRACK-MJX imitation
-decoder is frozen and maps intention plus proprioception to 38 torques at 100
-Hz. Both E0 and E1 share this motor infrastructure; PPO initializes only the
-high-level policy from scratch.
-
-There is no target action, adversarial discriminator, world-model planning
-loop, or trainable second policy.
-
-### Objective
-
-\[
-\max _\pi \mathbb E_\pi\left[
-\sum_t\gamma^t\left(
-r_t^{\rm task}+\beta\frac{1}{\dim(w_t)}
-\log p_\phi(w_t\mid h_t,c_t)
-\right)\right],
-\]
-
-where `p_phi` is the frozen Demo B model. The realized physical motion after the
-policy acts supplies `w_t`; the past-only physical token history supplies `h_t`;
-and joystick velocity/yaw is converted to Demo B's 0.62 s egocentric
-displacement command `c_t`.
-
-PPO and the frozen decoder act at 10 ms. Physical features are sampled at 20
-ms and one likelihood token is emitted every 80 ms. PPO reward exposes two
-named columns:
+Retarget Coltrane strict locomotion to the Fetch skeleton:
 
 ```text
-task reward:   did the rat track the command and remain physically viable?
-prior reward:  was the motion just produced likely under real rat motion?
+rodent keypoints
+  -> trunk frame and semantic paws
+  -> contact-aware stance pinning
+  -> bounded sequence inverse kinematics
+  -> Fetch root, ten joints, feet, contacts
 ```
 
-The prior is frozen and receives no gradient. PPO is still RL; SSL trained the
-reward model beforehand.
+Do not copy relative rotations between anatomically unlike bones. Match semantic
+paw endpoints and regularize the whole sequence.
 
-### Same-body control
+Then explain the physical-scale fix. The spatial transform enlarges trunk
+length by 21.3789x. Retaining the source clock made the old Fetch target about
+3 units/s and produced moon-like dynamics. Froude similarity dilates time by
+`sqrt(21.3789)=4.6237`, mapping 0.20 m/s source locomotion to 0.924747 Fetch
+units/s and command `[0.573343, 0, 0]` over 0.62 seconds.
 
-Train paired arms under identical initialization, native RodentJoystick reset,
-command stream, decoder, policy, PPO settings, and physical-step budget:
+Build four disjoint target-time crops within each parent clip; never join clips.
+A 1% joint-saturation gate leaves 7,483/1,166/1,425 session-split clips.
 
-| arm | `r_task` | frozen `log p_phi` |
+Repeat Demo B's model pattern in a 60-D Fetch representation. The accepted
+small model reads four 16-D history tokens and predicts one next token. During
+training it recursively consumes four of its own predictions and receives a
+joint-limit penalty. This fixes rollout drift without replacing the workshop
+architecture.
+
+Measured evidence:
+
+- train in 51.4 seconds;
+- achieve 0.0080/0.0129 m/s validation/test speed MAE;
+- beat shuffled futures by +5.81/+5.56 mean log likelihood;
+- select the matching command in 5/5 speed bins on both splits;
+- peak locally at the exact matched speed on both splits;
+- produce zero joint-limit saturation in all evaluated rollouts.
+
+Freeze the model after these data-only gates. Do not tune it on Demo G PPO.
+
+## 7. Demo G — combine task and data constraints
+
+Status: **implemented, evaluated over three policy seeds, and accepted only for
+a limited claim.**
+
+Reuse Demo A's environment and PPO code with the Froude-aligned target
+`v*=0.924747` and `sigma=v*/3`. Compare:
+
+| arm | Demo A task reward | frozen Demo F score |
 |---|---:|---:|
-| E0 task-only | yes | no (`beta=0`) |
-| E1 task+prior | yes | yes |
+| G0 | yes | no (`beta=0`) |
+| G1 | yes | yes (`beta=0.1`) |
 
-This is the result to show, rather than comparing E directly with the
-different-bodied Demo A.
+Train:
 
-### Command grid
+\[
+\max_\pi\;\mathbb E\sum_t\gamma^t
+\left[r_t^{\rm task}+\beta\,
+\operatorname{sigmoid}\left(\frac{\ell_\phi(w_t\mid h_t,c)+20}{5}\right)
+\right].
+\]
 
-The fixed diagnostic grid is 0, 0.10, 0.20, and 0.30 m/s straight, plus 0.30
-m/s with ±0.75 rad/s yaw. The 0.30 m/s cell is retained because it is the first
-command at which the reproduced 52M reference shows unequivocal locomotion.
-Every cell must be labelled with whether its displacement command lies inside
-Demo B's empirical support.
+The pure-JAX Demo F network is frozen. It sees the same 60-D feature contract,
+with four unsupported yaw-only roll/pitch channels masked. Collect 32 causal
+frames, score all 2,048 environments in one batch every four frames, and keep
+task reward frame-by-frame.
 
-### Evaluation
+Use 30M transitions and three PPO evaluations. Measured G0 runs take 57.8–59.8
+seconds and G1 runs 68.0–69.5 seconds. A sequential pair is about 2.1 minutes.
 
-Show both axes before any combined score:
+Evaluate with shaping disabled using five paired rollout seeds per policy seed:
 
-- **Functional `F`:** fixed-command velocity/yaw tracking, 10 s survival,
-  lateral drift, energy, and optional waypoint success.
-- **Distributional `R`:** raw frozen conditional likelihood, reported only on
-  post-warm-up tokens, plus stride/phase/skate/joint diagnostics when available.
+| training seed | raw log-p improvement | direct composite | tracking retained |
+|---:|---:|---:|---:|
+| 0 | +18.11 (5/5 wins) | +5.78 (5/5) | 100.15% |
+| 1 | +32.76 (5/5 wins) | +3.66 (5/5) | 100.58% |
+| 2 | +17.28 (5/5 wins) | -0.30 (0/5) | 100.15% |
 
-The success claim requires E1 to preserve E0 function and survival while
-improving raw motion likelihood beyond seed noise. A higher transformed reward
-alone is not success, and likelihood is not claimed to be biological realism.
+Across training seeds, raw likelihood improves by `22.72 ± 7.11`; tracking and
+survival are retained in every seed. Airborne fraction, stance-foot speed,
+approximate world-foot slip, and joint-speed RMS move toward the held-out
+reference in 3/3 seeds. The complete nine-measure gait distance improves in only
+2/3 seeds, and cyclicity improves in 0/3.
 
-Pipeline v6 repairs the prior bridge: source-constant channels are masked, yaw
-commands are integrated into a planar 0.62 s arc, and a validation-selected
-single-negative conditional scorer is exported separately from Demo B's
-behavioral generator. It clears the frozen transfer gate on two training seeds
-(moving top-1 0.629/0.672 and positive matched margins). The reward transform
-is frozen to `[-1.5, -0.75]` nats per dimension with `beta=1`.
+Select seed 0 as the best presentation model because it passes every
+single-seed gate and gives the largest direct improvement. It reduces contact
+switching 11.48→3.11 Hz, world-foot slip 1.92→0.75, and vertical acceleration
+1.78→0.91 g while preserving near-target speed. Retain its failures: maximum
+flight duration worsens, cyclicity worsens, and the rendered posture is
+crouched.
 
-The first 9.83M-transition E1 run is still not a success result. It stands
-almost upright on two legs, averages about 0.013 m/s under the 0.30 m/s command,
-and crosses the torso-orientation termination threshold around 3.04 s. The
-scorer ranks the confirmed gait above this stance, but its incremental shaping
-advantage is too small to bootstrap locomotion at this budget. A paired,
-transition-matched E0/E1 result remains required.
+## 8. Acceptance gates
 
-## 6. Measured workshop runtime
+| gate | result |
+|---|---|
+| complete one matched pair in under five minutes | pass: about 2.1 min inside `ppo.train` |
+| validate dynamic data and frozen prior before PPO | pass on validation and final test |
+| clear causal state at vectorized resets | pass: permanent CPU regression |
+| match G0/G1 budget and PPO settings | pass: 30M, 2,048 envs, three evals |
+| evaluate with shaping disabled | pass: five paired rollouts per training seed |
+| retain at least 95% tracking and survival | pass in 3/3 seeds |
+| improve held-out raw likelihood | pass in 3/3 seeds and 15/15 rollouts |
+| improve at least one direct measure in every seed | pass for four measures |
+| improve the full gait composite in every seed | **fail: only 2/3** |
 
-Demos A and B train in workshop time. The successful upstream joystick
-reference requested 50M transitions and reached 52,428,800 after PPO batching.
-On the H100 it took about 40 minutes of training plus 7 minutes of evaluation,
-or 45–47 minutes end to end. It used 8,192 environments, 100-Hz torque control,
-and 1024/512/256 actor and critic layers.
+Present the limited claim that passed. Do not redefine the failed gate or use
+learned likelihood as a synonym for physical realism.
 
-The confirmed native-reset clip at 0.30 m/s is steady. Checkpoint evaluation
-shows stable standing through 39.3M and forward locomotion at 52.4M, placing
-gait onset roughly 34–45 minutes into the run. No five-minute convergence claim
-exists. Pipeline-v6 E1 reached 9.83M transitions in 582.5 s (9.71 min) and
-learned upright standing, not gait. Its exhaustive four-checkpoint evaluation
-took a separate 495.9 s. Use precomputed checkpoints for workshop playback and
-always report compilation, training, and evaluation separately.
+## 9. Live run of show
 
-## 7. Workshop run of show
+1. Explain environment, observation, action, reward, policy, and return.
+2. Show the few lines defining Demo A's reward.
+3. Train or replay Demo A and plot forward speed plus task return.
+4. Slide a window over recorded rodent motion to construct Demo B's future.
+5. Show Demo B generations and rewrite MSE as Gaussian likelihood.
+6. Show spatially retargeted Fetch clips and explain the time-scale correction.
+7. Train or replay Demo F and show its held-out likelihood matrix.
+8. Freeze Demo F visually and add one `beta * prior_score` term to PPO.
+9. Train one matched G0/G1 pair or replay all three measured pairs.
+10. Plot task tracking and raw likelihood separately before showing videos.
+11. Show the four robust direct measures, then the seed-2 composite failure.
+12. Ask students which signal came from data and which came from interaction.
 
-1. Show Demo A checkpoint deciles and define RL: reward follows interaction;
-   actions are never supplied as labels.
-2. Slide a window over real motion in Demo B and define SSL: the shifted future
-   is the target.
-3. Rewrite Demo B's MSE as Gaussian log likelihood, then visibly freeze the
-   model.
-4. Add `beta * log_prob` to Demo A-shaped PPO reward in the MIMIC rodent.
-5. Once a paired result clears the gates, render E0 and E1 side by side under
-   the same straight and turning commands; until then, label the ten-minute
-   upright-standing clip as a diagnostic failure, not the workshop result.
-6. Show task tracking and raw motion likelihood as separate plots, then state
-   the likelihood and biological-realism limitations.
+The final sentence students should be able to say is:
 
-The minimal board diagram is:
+> **Demo F constructed targets by shifting retargeted recordings, so it was
+> self-supervised. Demo G froze that learned motion score as one reward term,
+> while task reward still came from physical interaction and PPO still learned
+> the actions.**
 
-```text
-recording -- self-generated future target --> Demo B p_phi -- freeze --+
-                                                                      |
-command --> PPO --> intention --> frozen decoder --> physical rodent --+--> prior reward
-                    ^                                |
-                    +------------- task reward ------+
-```
+## 10. Claim boundaries
 
-## 8. What not to claim
+- “Rodent-derived motion statistics on Fetch” is accurate; “rat biomechanics on
+  Fetch” is not.
+- Retargeting changes morphology, scale, contacts, and dynamics.
+- A Gaussian score is a learned data-likelihood proxy, not biological realism.
+- Better kinematics do not imply better neural similarity.
+- Demo B and Demo F do not learn actions.
+- G0 versus G1—not Demo A versus Demo F—is the controlled causal comparison.
+- Demo G is aligned with Demo A's task form and code, not its standalone
+  3-unit/s target.
+- Report seed 2 and the failed direct-composite gate in every presentation.
 
-- Demo B's network is not a measured biological brain.
-- Optimizing a learned likelihood does not guarantee biological realism; raw
-  likelihood, task behavior, and failure diagnostics must remain separate.
-- Demo E does not show that SSL learns actions. PPO learns actions from return.
-- Demo E uses MIMIC's published imitation decoder as frozen shared motor
-  infrastructure. It does not train or present that decoder as Demo B.
-- The 0.30 m/s training/evaluation cell must be labelled against Demo B's
-  empirical command support.
-- The physical controller uses raw torque actuators at 100 Hz; PPO emits a
-  higher-level 16-D intention, not torque directly.
-- Demo A/B/E are not themselves a controlled three-way ablation. E0/E1 is.
-- No hidden-activity/neural claim follows from better kinematics. Any later
-  aligned-neural analysis is exploratory and cannot tune the model.
+## 11. Research-history demos
 
-## 9. Demos C and D
+- [Demo C](demo_c.md): world/action model plus PPO and exploratory neural
+  analysis.
+- [Demo D](demo_d.md): one-stage hindsight-command imitation; its
+  identifiability failures motivate Demo F's explicit likelihood audit.
+- [Demo E](demo_e.md): the same SSL+RL idea on the full MIMIC skeletal rodent.
+  The published decoder locomotes well, but the ten-minute scratch-PPO run
+  learned an upright stance rather than workshop-ready locomotion.
 
-Demos C and D are no longer in the core presentation and should not consume
-workshop time:
+Keep these as valuable negative and engineering results, not live baselines.
 
-- [Demo C](demo_c.md) remains a completed world-model/PPO and exploratory
-  aligned-neural study. It is useful for frozen-model provenance, JAX/PyTorch
-  boundaries, and careful neural evaluation.
-- [Demo D](demo_d.md) remains a one-stage hindsight/imitation experiment whose
-  negative command intervention exposed conditional-identifiability and
-  termination problems. It motivates independent command sampling, physical
-  termination, and a same-state intervention test in E.
+## 12. Reproducibility discipline
 
-Keep their code and reports as optional reading. Do not delete the evidence and
-do not present their rejected results as Demo E baselines.
+Continue to follow `canvas/misc/autoresearch.md`:
 
-## 10. Reproducibility and iteration
+- freeze data IDs, splits, objectives, commands, beta, budgets, and gates before
+  a controlled run;
+- validate real-versus-shuffled likelihood and command sensitivity before PPO;
+- keep beta-zero parity and reset isolation as regression tests;
+- report raw task reward, raw likelihood, transformed reward, behavior, and
+  runtime separately;
+- change one major block per experiment and keep append-only decision logs;
+- require multiple policy seeds before making an algorithm-level claim;
+- stop at the declared experiment boundary instead of tuning on final reports.
 
-Apply `canvas/misc/autoresearch.md`:
-
-- freeze data IDs, objective, command grid, beta rule, nulls, budget, scalar,
-  and gates before comparison;
-- validate real > shuffled/noised likelihood and command sensitivity before PPO;
-- make beta-zero reproduce task-only transitions and rewards;
-- establish multi-seed noise before accepting a prior improvement;
-- log task/prior reward, behavior, throughput, memory, and per-command metrics;
-- change one major block per experiment and maintain an append-only decision
-  log;
-- never select an intermediate checkpoint or model on final-test behavior.
-
-The workshop succeeds if a new graduate can say:
-
-> **Demo B constructed its target by shifting recorded motion, so it was
-> self-supervised. Demo E froze that learned likelihood and used it as one reward
-> term. The joystick task reward still came from physical interaction, and PPO
-> learned the actions.**
-
-## 11. Literature anchors
+## 13. Literature anchors
 
 - Aldarondo et al. 2024, *A virtual rodent predicts the structure of neural
-  activity across behaviors*, Nature, DOI 10.1038/s41586-024-07633-4.
-- Merel et al. 2020, *Deep neuroethology of a virtual rodent*.
+  activity across behaviors*.
 - Schulman et al. 2017, *Proximal Policy Optimization Algorithms*.
 - Peng et al. 2021, *AMP: Adversarial Motion Priors for Stylized Physics-Based
-  Character Control*, as related context; Demo E uses an explicit frozen
-  conditional likelihood rather than an adversarial discriminator.
+  Character Control*, as related context. Demo G uses an explicit frozen
+  conditional Gaussian score rather than an adversarial discriminator.

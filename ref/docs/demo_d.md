@@ -5,7 +5,8 @@ _Drafted 2026-07-19. Companion to [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md),
 append-only [experiment log](../../demo_d/experiment/DECISIONS.md)._
 
 > **Presentation status.** Retained as a measured research reference. The core
-> workshop now presents Demos A, B, and planned E; see [demo_e.md](demo_e.md).
+> workshop now presents Demos A, B, F, and planned G; see
+> [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) and [demo_g.md](demo_g.md).
 
 > **Current status.** The one-stage system is implemented end to end. Two complete
 > fixed-budget runs establish that the present policy learns some held-out imitation

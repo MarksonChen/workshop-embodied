@@ -6,8 +6,8 @@ _Revised and implemented 2026-07-19. Companion to
 [demo_c_prev.md](demo_c_prev.md)._
 
 > **Presentation status.** Retained as an implemented research reference. The
-> core workshop now presents Demos A, B, and planned E; see
-> [demo_e.md](demo_e.md).
+> core workshop now presents Demos A, B, F, and planned G; see
+> [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) and [demo_g.md](demo_g.md).
 
 ## 1. The pedagogical contract
 

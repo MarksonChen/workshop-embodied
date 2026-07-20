@@ -108,8 +108,8 @@ class PriorConfig:
     crop_stride: int = 16
     downsample: int = 4
     latent_dim: int = 16
-    history_tokens: int = 8
-    future_tokens: int = 8
+    history_tokens: int = 4
+    future_tokens: int = 1
     hidden_channels: int = 192
     transformer_layers: int = 4
     transformer_heads: int = 4
@@ -119,3 +119,8 @@ class PriorConfig:
     tokenizer_batch_size: int = 128
     predictor_batch_size: int = 256
     learning_rate: float = 2e-3
+    # The accepted dynamic prior is trained through its own four-token rollout.
+    # Penalizing decoded joint-limit excursions in that closed loop prevents a
+    # safe one-step prediction from drifting into saturation at generation time.
+    joint_limit_penalty: float = 10.0
+    training_rollout_tokens: int = 4

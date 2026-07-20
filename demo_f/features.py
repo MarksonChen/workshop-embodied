@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .dataset.contract import FPS
+from .config import FPS
 
 
 SL = {

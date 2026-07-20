@@ -7,28 +7,28 @@ built, what's proven, what's uncertain, and what to do next. Written as a handof
 document — someone (or some agent) picking this up should be able to continue
 from here without re-deriving anything.
 
-> **Workshop overlay (updated 2026-07-20).** Sections 1–8 below preserve the original
-> `rl/` joystick project history. The core presentation is now Demo A (PPO),
-> Demo B (conditional motion learning), and Demo E (the frozen Demo B
-> likelihood added to physical RodentJoystick PPO). Demo C and Demo D remain
-> research references but are no longer in the live run of show. See
-> [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md), [demo_e.md](demo_e.md),
-> [demo_c.md](demo_c.md), and [demo_d.md](demo_d.md). Aligned Demo E now
-> deliberately **does** reuse the published decoder described below as frozen,
-> shared motor infrastructure in both controlled arms. Demo B has been restored
-> to the original 281-D Coltrane model after controlled Freddie trials produced
-> severe twitching. Its unchanged generator walks and its Gaussian wrapper has
-> strong command discrimination, but its current calibration is in-sample.
-> Demo E pipelines v1/v2 (direct actuator and Freddie/85-D) and pipeline v4's
-> forwarded-reset experiments are rejected. Pipeline v6 now combines literal
-> native reset/autoreset, the 281-D marker bridge, masking of two
-> source-constant channels, exact 0.62 s arc commands, and a separately exported
-> conditional scorer. That scorer clears frozen source/physical gates on two
-> training seeds. Its first 9.83M-transition E1 diagnostic took 9.71 minutes and
-> learned to stand almost upright on two legs, but not to locomote (about 0.013
-> m/s at a 0.30 m/s command; torso-angle termination around 3.04 s). A paired,
-> transition-matched E0/E1 result and full gait-onset budget remain open. See
-> `demo_e/experiment/TEN_MINUTE_E1.md` for the audited result.
+> **Workshop overlay (updated 2026-07-20).** Sections 1–8 below preserve the
+> original `rl/` joystick-project history. The current live presentation is now
+> Demo A (Fetch PPO), Demo B (conditional rodent motion), Demo F (the same SSL
+> construction after contact-aware retargeting to Fetch), and Demo G (paired
+> task-only versus task-plus-frozen-prior Fetch PPO). See
+> [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md), [demo_a.md](demo_a.md),
+> [demo_b.md](demo_b.md), [demo_f.md](demo_f.md), and [demo_g.md](demo_g.md).
+> Demo F now has a dynamically scaled v2 release: the 21.3789x spatial
+> enlargement is paired with a 4.6237x Froude time dilation, so 0.20 m/s rodent
+> motion maps to 0.924747 Fetch units/s. Its small closed-loop prior trains in
+> 51.4 seconds and passes every validation/final-test rollout, likelihood, and
+> joint-limit gate. Demo G uses that same target and is evaluated over three
+> matched training seeds. Each 30M arm finishes in 58–70 seconds inside
+> `ppo.train`; raw held-out likelihood improves in all 15 paired rollouts, while
+> tracking and survival are retained. Airborne fraction, stance-foot speed,
+> approximate world-foot slip, and joint-speed RMS improve toward held-out
+> motion in 3/3 seeds, but the complete gait composite improves in only 2/3 and
+> cyclicity in 0/3. Seed 0 is the best presentation checkpoint; preserve seed
+> 2 as a robustness failure. Demos C, D, and E remain research references. In
+> particular, Demo E's ten-minute full-skeletal-rodent run learned an upright
+> stance rather than locomotion and must not be presented as the workshop
+> result.
 
 ---
 
@@ -71,6 +71,8 @@ embodied/
 ├── demo_c/               archived workshop prototype: world-action + PPO + neural eval
 ├── demo_d/               archived workshop prototype: hindsight-command torque PPO
 ├── demo_e/               frozen-motion-likelihood + paired RodentJoystick PPO
+├── demo_f/               retargeted Coltrane-to-Fetch dataset and SSL prior
+├── demo_g/               same-body Fetch task-only/task+prior PPO (complete, limited claim)
 ├── rl/                   OUR code (see Section 3)
 │   ├── check_compat.py       proprioception-compatibility check (277 == 277)
 │   ├── run_imitation.py      roll out + render the published imitation policy

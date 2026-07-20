@@ -1,10 +1,9 @@
 # Demo C — a small world-action model plus PPO, on the virtual rodent
 
 > **Research reference (2026-07-19).** Demo C remains implemented and evaluated,
-> but it is no longer part of the core live workshop. The A/B/E presentation and
-> replacement synthesis are specified in
-> [`ref/docs/WORKSHOP_PLAN.md`](../ref/docs/WORKSHOP_PLAN.md) and
-> [`ref/docs/demo_e.md`](../ref/docs/demo_e.md).
+> but it is no longer part of the core live workshop. The current A/B/F/G arc is
+> specified in [`ref/docs/WORKSHOP_PLAN.md`](../ref/docs/WORKSHOP_PLAN.md) and
+> [`ref/docs/demo_g.md`](../ref/docs/demo_g.md).
 
 Demo C combines the ideas from the first two workshop demos without turning the
 lesson into a state-of-the-art model survey:

@@ -2,8 +2,8 @@
 
 > **Research reference (2026-07-19).** Preserve this implementation and its
 > negative command-control evidence, but do not include it in the core live
-> workshop. Demo E is now the planned A + B synthesis; see
-> [`ref/docs/demo_e.md`](../ref/docs/demo_e.md).
+> workshop. Demo G is now the planned same-body synthesis; see
+> [`ref/docs/demo_g.md`](../ref/docs/demo_g.md).
 
 The canonical design, measured v3/v4 results, diagnosis, claim boundaries, and next
 steps are in [`ref/docs/demo_d.md`](../ref/docs/demo_d.md). The runnable package here
