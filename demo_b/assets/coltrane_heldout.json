@@ -1,0 +1,162 @@
+{
+  "calibration": {
+    "heldout_sessions_used_for_sigma": false,
+    "sigma": 0.05231750011444092,
+    "sigma_source": "standalone training windows only"
+  },
+  "contract": {
+    "animal": "coltrane",
+    "asset_sha256": "54726e820856a0a6b22680b3596ef8acb3548d7150a9f97f7dbeb6a12bd92541",
+    "feature_dim": 281,
+    "selection": "frozen_strict_geometric_locomotion",
+    "test_sessions": [
+      "2021_08_07_1",
+      "2021_08_13_1",
+      "2021_08_19_1",
+      "2021_08_27_1",
+      "2021_09_15_1"
+    ],
+    "train_sessions": [
+      "2021_07_28_1",
+      "2021_07_29_1",
+      "2021_07_30_1",
+      "2021_07_31_1",
+      "2021_08_01_1",
+      "2021_08_02_1",
+      "2021_08_03_1",
+      "2021_08_04_1"
+    ],
+    "validation_sessions": [
+      "2021_08_05_1",
+      "2021_08_11_1",
+      "2021_08_17_1",
+      "2021_08_23_2",
+      "2021_09_04_1"
+    ]
+  },
+  "eligible_for_demo_e": false,
+  "gates": {
+    "all_heldout_sessions_retained": true,
+    "canonical_281_coltrane": true,
+    "session_disjoint": true,
+    "test_beats_persistence": false,
+    "test_beats_shuffled": true,
+    "test_speed_bins_diagonal": false,
+    "test_speed_curve_peaks_at_match": false,
+    "validation_beats_persistence": false,
+    "validation_beats_shuffled": true
+  },
+  "metrics": {
+    "test": {
+      "first_mse": 1.4434171915054321,
+      "logp_mean": -261.64288330078125,
+      "logp_q01": -3101.62890625,
+      "logp_q99": -21.178058624267578,
+      "logp_shuffled_mean": -488.3207092285156,
+      "mse": 1.6889925003051758,
+      "persistence_first_mse": 1.4343740940093994,
+      "sigma": 0.05231750011444092,
+      "skill_over_persistence": -0.006304559970652601
+    },
+    "test_speed_likelihood": {
+      "chance_accuracy": 0.2,
+      "diagonal_wins": 1,
+      "mean_logp_matrix_actual_rows_conditioned_columns": [
+        [
+          -470.2347412109375,
+          -496.38720703125,
+          -525.0952758789062,
+          -558.4454345703125,
+          -627.8790283203125
+        ],
+        [
+          -136.91778564453125,
+          -137.8271484375,
+          -141.91656494140625,
+          -148.67193603515625,
+          -166.67111206054688
+        ],
+        [
+          -112.32760620117188,
+          -109.44646453857422,
+          -110.45655822753906,
+          -114.27208709716797,
+          -126.25767517089844
+        ],
+        [
+          -139.67361450195312,
+          -139.29612731933594,
+          -141.42308044433594,
+          -145.61268615722656,
+          -157.69212341308594
+        ],
+        [
+          -147.7794647216797,
+          -142.51783752441406,
+          -140.20208740234375,
+          -139.94654846191406,
+          -144.173828125
+        ]
+      ],
+      "n_examples": 339,
+      "relative_mean_logp": [
+        -116.1010513305664,
+        -116.68352508544922,
+        -117.7513656616211,
+        -119.29844665527344,
+        -121.31622314453125
+      ],
+      "relative_peak_at_match": false,
+      "relative_peak_offset_m_per_s": -0.028776714578270912,
+      "relative_speed_offsets_m_per_s": [
+        -0.028776714578270912,
+        -0.014388357289135456,
+        0.0,
+        0.014388357289135456,
+        0.028776714578270912
+      ],
+      "row_argmax_conditioned_bin": [
+        0,
+        0,
+        1,
+        1,
+        3
+      ],
+      "sample_top1_speed_bin_accuracy": 0.2713864306784661,
+      "speed_centers_m_per_s": [
+        0.055812906473875046,
+        0.09643461555242538,
+        0.13158784806728363,
+        0.16523993015289307,
+        0.22221310436725616
+      ]
+    },
+    "validation": {
+      "first_mse": 2.1400680541992188,
+      "logp_mean": -388.9026794433594,
+      "logp_q01": -5025.88916015625,
+      "logp_q99": -23.877363204956055,
+      "logp_shuffled_mean": -660.3099365234375,
+      "mse": 2.626190423965454,
+      "persistence_first_mse": 1.7751996517181396,
+      "sigma": 0.05231750011444092,
+      "skill_over_persistence": -0.20553654465171767
+    }
+  },
+  "sessions_retained": {
+    "test": [
+      "2021_08_07_1",
+      "2021_08_13_1",
+      "2021_08_19_1",
+      "2021_08_27_1",
+      "2021_09_15_1"
+    ],
+    "validation": [
+      "2021_08_05_1",
+      "2021_08_11_1",
+      "2021_08_17_1",
+      "2021_08_23_2",
+      "2021_09_04_1"
+    ]
+  }
+}

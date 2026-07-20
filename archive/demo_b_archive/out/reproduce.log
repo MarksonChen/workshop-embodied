@@ -1,0 +1,47 @@
+[cache] HIT ds_coltrane_8_motion
+[assemble] 8 sessions, 0 units; crops train=1253 val_search=192 val_audit=145 test_final=150
+[build] ready in 0s
+[repro] 8 loco sess; frozen tokenizer; build 0s; train 300s
+[train] 1344 motion windows; 8 sess
+/home/markson/projects/canvas/canvas/autoresearch/stage3/motor_rollout.py:97: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  if step % 500 == 0: print(f"    step={step:5d} ({time.time()-t0:4.0f}s) x0mse={float(loss):.4f}", flush=True)
+    step=  500 (  10s) x0mse=0.2632
+    step= 1000 (  20s) x0mse=0.1461
+    step= 1500 (  30s) x0mse=0.0620
+    step= 2000 (  40s) x0mse=0.0181
+    step= 2500 (  53s) x0mse=0.0074
+    step= 3000 (  65s) x0mse=0.0052
+    step= 3500 (  77s) x0mse=0.0033
+    step= 4000 (  90s) x0mse=0.0035
+    step= 4500 ( 102s) x0mse=0.0040
+    step= 5000 ( 116s) x0mse=0.0035
+    step= 5500 ( 126s) x0mse=0.0031
+    step= 6000 ( 136s) x0mse=0.0031
+    step= 6500 ( 148s) x0mse=0.0029
+    step= 7000 ( 159s) x0mse=0.0034
+    step= 7500 ( 169s) x0mse=0.0030
+    step= 8000 ( 179s) x0mse=0.0022
+    step= 8500 ( 190s) x0mse=0.0035
+    step= 9000 ( 200s) x0mse=0.0022
+    step= 9500 ( 209s) x0mse=0.0024
+    step=10000 ( 220s) x0mse=0.0020
+    step=10500 ( 229s) x0mse=0.0022
+    step=11000 ( 238s) x0mse=0.0017
+    step=11500 ( 247s) x0mse=0.0016
+    step=12000 ( 258s) x0mse=0.0017
+    step=12500 ( 267s) x0mse=0.0012
+    step=13000 ( 276s) x0mse=0.0015
+    step=13500 ( 287s) x0mse=0.0014
+    step=14000 ( 297s) x0mse=0.0011
+[repro] saved faithful model -> /home/markson/projects/canvas/rl/out/motor_repro.pt
+[repro] 2 loco seeds, 13 steps -> ~8s each
+
+[repro/coltrane_202]  448f ( 9.0s)  skate 0.0029  pen mean  5.22mm max  26.99mm (100% frames)  jerk   753.7  minz  -27.0mm
+[repro/coltrane_202+ff]  448f ( 9.0s)  skate 0.0019  pen mean  0.00mm max   0.00mm (  0% frames)  jerk   764.5  minz   -0.0mm
+  [video] /home/markson/projects/canvas/rl/out/repro_coltrane_2021_07_29_1.mp4
+[repro/coltrane_202]  448f ( 9.0s)  skate 0.0042  pen mean  2.71mm max  25.19mm ( 93% frames)  jerk  1094.5  minz  -25.2mm
+[repro/coltrane_202+ff]  448f ( 9.0s)  skate 0.0036  pen mean  0.00mm max   0.00mm (  0% frames)  jerk  1121.5  minz   -0.0mm
+  [video] /home/markson/projects/canvas/rl/out/repro_coltrane_2021_07_30_1.mp4
+
+[repro] done in 412s. REAL reference: skate ~0.003, pen ~1mm, jerk ~570.

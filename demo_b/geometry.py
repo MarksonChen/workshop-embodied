@@ -1,7 +1,10 @@
 """Rotation helpers + qpos reconstruction (copied from CANVAS prepare.py). Pure numpy, no external imports."""
 import math
 import numpy as np
-from constants import FPS
+try:
+    from .constants import ACTIVE_JOINTS, FPS
+except ImportError:  # pragma: no cover
+    from constants import ACTIVE_JOINTS, FPS
 
 
 def quat2yaw(q):                                            # q: (...,4) wxyz
@@ -46,17 +49,26 @@ def sixd2mat(d):                                            # (...,6) -> (...,3,
 def reconstruct_qpos(feat, q0):
     """integrate root-local vel + 6D orientation delta back to global qpos(74); joint angles read directly."""
     Ln = len(feat); qpos = np.zeros((Ln, 74))
+    full_joints = feat.shape[-1] >= 143
     xy = q0[:2].copy(); R = quat2mat(q0[3:7][None])[0]
     for t in range(Ln):
-        vlx, vly = feat[t, 0], feat[t, 1]; h = feat[t, 2]; d6 = feat[t, 3:9]; jq = feat[t, 9:76]
+        vlx, vly = feat[t, 0], feat[t, 1]; h = feat[t, 2]; d6 = feat[t, 3:9]
         yaw = math.atan2(R[1, 0], R[0, 0]); c, s = math.cos(yaw), math.sin(yaw)
         xy = xy + np.array([c * vlx - s * vly, s * vlx + c * vly]) / FPS
         R = R @ sixd2mat(d6[None])[0]
-        qpos[t, :2] = xy; qpos[t, 2] = h; qpos[t, 3:7] = mat2quat(R); qpos[t, 7:] = jq
+        qpos[t, :2] = xy; qpos[t, 2] = h; qpos[t, 3:7] = mat2quat(R)
+        if full_joints:
+            qpos[t, 7:] = feat[t, 9:76]
+        else:
+            qpos[t, 7 + np.asarray(ACTIVE_JOINTS)] = feat[t, 9:47]
     return qpos
 
 
 def q0_from(f0, xy0, yaw0):
     """initial qpos(74) from the first feature frame + a world (xy, yaw) placement."""
     q = np.zeros(74); q[:2] = xy0; q[2] = f0[2]; q[3] = math.cos(yaw0 / 2); q[6] = math.sin(yaw0 / 2)
-    q[7:] = f0[9:76]; return q
+    if len(f0) >= 143:
+        q[7:] = f0[9:76]
+    else:
+        q[7 + np.asarray(ACTIVE_JOINTS)] = f0[9:47]
+    return q

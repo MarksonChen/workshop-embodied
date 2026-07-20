@@ -1,69 +1,114 @@
-# demo_b — rodent locomotion motor model, standalone
+# Demo B — conditional self-supervised Coltrane motion
 
-A minimal, **self-contained** version of the `rl/` side project: load a trained rat-locomotion motor model, roll it
-out under egocentric commands, measure foot-contact quality, and drive it to custom waypoints. **The runtime imports
-nothing outside this directory** — only `torch`, `numpy`, `mujoco`, `matplotlib`, `mediapy` (deps, not project code).
-Lifted from the CANVAS repo; see `../rl/` for the research history that produced the model and these techniques.
+Demo B learns only from recorded rat motion. A causal convolutional VAE turns
+50 Hz skeletal motion into 16-D tokens at 12.5 Hz; a small Transformer predicts
+the next eight tokens from eight past tokens and a hindsight displacement
+command. Future frames from the same recording supply both command and target:
+there are no actions, task rewards, or physics interactions.
 
-## What the model is
+The workshop checkpoint is the original, behaviorally validated Coltrane model
+from `rl_standalone/`. Its weights are unchanged. Demo B adds a fixed Gaussian
+interpretation around the predicted mean:
 
-A frozen **motion tokenizer** (causal conv VAE, 64-frame crop → 16×16 latent) + a **transition** that predicts the
-next 8 motion latents from the last 8, conditioned on a per-step egocentric command `γ = [dx_ego, dy_ego, dψ]`.
-Rolled out autoregressively and decoded to `qpos(74)` for the MuJoCo rodent.
-
-The transition (`models.SimpleTrans`) is deliberately a **standard `nn.TransformerEncoder` + an MLP head, trained
-with plain MSE** — no rotary/QK-norm attention, no diffusion sampler, no per-session table. That is the *graduated*
-design from the ablation in `exploration/` (`DECISIONS.md`): a sequential autoresearch loop showed the shipped
-model's RoPE attention, 10-step diffusion head, and session embedding each change the rollout by *less than the
-measured noise floor*, so they were removed. The simplified model walks the same (slightly smoother) and trains ~2×
-faster.
-
-## One-time setup (bootstrap the weights)
-
-Runtime code is standalone, but the 20 MB weights+seed bundle is generated once from the parent CANVAS checkpoints
-(the repo does not commit `*.pt`). From the CANVAS repo root:
-
-```bash
-uv run python demo_b/make_assets.py        # trains SimpleTrans on parent loco data + bundles it (imports canvas)
+```text
+p(next token | history, command) = Normal(predicted mean, sigma^2 I)
 ```
 
-This trains the simplified transition (~3 min) on the parent repo's locomotion data with the frozen tokenizer, and
-writes `assets/motor_standalone.pt`. It is the ONLY file here that reaches outside `demo_b`.
-`assets/arena.xml` + `assets/rodent.xml` (the MuJoCo model, primitives only — no meshes) are already bundled.
-Dependencies: `torch numpy mujoco matplotlib mediapy imageio-ffmpeg pillow` (already in the CANVAS env; `uv run …`).
+Because `sigma` is fixed, maximizing this likelihood is exactly equivalent to
+minimizing the model's original MSE. The likelihood API therefore does not
+change generation; it exposes the frozen scalar score needed by Demo E.
 
-## Run
+## Frozen representation and locomotion subset
 
-```bash
-uv run python demo_b/drive.py --seconds 16 --render     # go straight / walk in cycles + path plot
-uv run python demo_b/waypoint.py --shape square --render  # closed-loop reach 4 waypoints (also: star, zigzag)
+Each frame uses the original 281-D representation:
+
+```text
+root-local planar velocity                  2
+root height                                 1
+root orientation increment                  6
+67 fitted joint angles + velocities       134
+23 root-local keypoints + velocities      138
+                                           ---
+                                           281
 ```
 
-Outputs (mp4/png) land in `out/` (git-ignored). This box renders headless via `MUJOCO_GL=osmesa` (set automatically).
+The source is the first eight Coltrane sessions. Locomotion selection is the
+strict geometric rule used by the known-good model: non-overlapping 64-frame
+blocks must exceed 0.10 m/s planar speed, exhibit coordinated gait, turn less
+than 90 degrees, and keep front-spine vertical drift below 10 mm. Adjacent
+accepted blocks are merged before stride-16 training crops are made. The
+bundled real locomotion seed contains 320 frames from
+`coltrane/2021_07_29_1`.
+
+The Freddie experiments are retained under `demo_b/out/` as rejected
+comparisons. Even with the restored 281-D representation and a Freddie-matched
+tokenizer, slow rollouts twitched badly. They are not workshop assets.
+
+## Restore and validate
+
+From the repository root:
+
+```bash
+uv run --extra workshop python -m demo_b.promote_coltrane
+uv run --extra workshop python -m demo_b.evaluate
+```
+
+`promote_coltrane` copies the proven predictor weights unchanged and calibrates
+one scalar `sigma`. The current calibration set has 1,344 standalone training
+windows. It yields:
+
+- full future-token MSE: 0.00264;
+- matching conditioned speed wins all five population bins;
+- per-window speed-bin top-1 accuracy: 91.9% versus 20% chance;
+- the local likelihood curve peaks at zero speed mismatch.
+
+This establishes the teaching bridge and the behaviorally good generator. The
+speed audit is in-sample, so it demonstrates that the frozen conditional model
+uses its command; it is not an independent biological-realism result.
+
+Demo E's framework-neutral export is now built with:
+
+```bash
+uv run --extra workshop python -m demo_b.export_jax
+```
+
+It contains the unchanged encoder/predictor, likelihood calibration, and a
+fixed 23-marker forward-kinematic bridge fitted only on the eight source
+sessions. The bridge's current mean marker RMSE is 7.29 mm (10.18 mm maximum).
+It intentionally contains no physical reset bank: aligned Demo E preserves the
+native RodentJoystick reset and withholds likelihood reward for 0.64 s while
+the policy fills a real causal history.
+
+## Kinematic demonstrations
+
+```bash
+uv run --extra workshop python -m demo_b.speed_sweep --render
+uv run --extra workshop python demo_b/drive.py --seconds 16 --render
+uv run --extra workshop python demo_b/waypoint.py --shape square --render
+```
+
+The accepted inspection videos are:
+
+- `out/restored_coltrane_v010_straight.mp4`
+- `out/restored_coltrane_v015_straight.mp4`
+- `out/restored_coltrane_v020_straight.mp4`
+- `out/restored_coltrane_v025_straight.mp4`
+
+These are kinematic generations. Demo E asks PPO to produce plausible motion
+while controlling the same skeletal rodent in contact-rich physics.
 
 ## Layout
 
-```
-demo_b/
-  constants.py     frozen grid + feature layout (FPS, CLIP, NLAT, DM, H, K, FM, slices)
-  geometry.py      quat/6D rotation helpers + reconstruct_qpos (root-local vel + orient delta -> qpos)
-  models.py        MotionVAE (frozen tokenizer) + SimpleTrans (std Transformer + regression head) + load_motor()
-  mujoco_rodent.py build the arena+rodent MjModel from assets/*.xml
-  foot_metrics.py  skate / penetration / jerk (MuJoCo FK) + fix_floor / fix_upright / anchor_orientation / ground
-  rollout.py       autoregressive roll (hindsight / constant / fixed command) + MuJoCo render
-  drive.py         fixed-command demo (straight / circle) + top-down path plot
-  waypoint.py      closed-loop heuristic waypoint controller (steer the command; no RL)
-  make_assets.py   BOOTSTRAP ONLY — train SimpleTrans + bundle assets/motor_standalone.pt (imports canvas)
-  exploration/     the autoresearch ablation that simplified the transition (objective/lib/run + DECISIONS.md)
-  assets/          arena.xml, rodent.xml (tracked) + motor_standalone.pt (generated, git-ignored)
+```text
+models.py              causal MotionVAE, Transformer, and Gaussian score
+promote_coltrane.py    unchanged-weight rollback + likelihood calibration
+speed_sweep.py         fixed-speed rollout and video generation
+strict_locomotion.py   exact geometric locomotion rule
+marker_bridge.py       calibrated skeleton sites for all 23 keypoints
+export_jax.py          compact frozen scorer used inside Demo E
+train_full_prior.py    controlled Coltrane/Freddie research comparisons
+geometry.py            decoded features -> skeletal qpos
+rollout.py             autoregressive generation and rendering
 ```
 
-## Two things to know about the rollout
-
-- **Kinematic re-grounding.** `reconstruct_qpos` integrates root height + orientation open-loop, so over long rolls
-  the paws sink and the trunk pitches nose-up ("flies"). `ground(gq)` = `anchor_orientation` (a leaky gravity pull that
-  removes the drift while keeping gait bob) + `fix_floor` (snap paws to the floor). Render-side only; the model is
-  honest to ~2.5 s open-loop.
-- **Waypoint reaching needs no RL.** The command is already an egocentric go-to-goal signal, so a closed-loop
-  controller that re-points it at the goal each step reaches waypoints on its own (square 4/4, star 5/5, zigzag 3/4).
-  RL would only be worth it for latent-level control or extra objectives (foot contact, obstacles, timing).
+See [`demo_e/README.md`](../demo_e/README.md) for the physical SSL+RL status.

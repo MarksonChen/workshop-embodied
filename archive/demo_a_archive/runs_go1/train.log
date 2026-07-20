@@ -1,0 +1,12 @@
+Training Go1JoystickFlatTerrain: 2e+08 steps, 8192 envs
+[    15s] step            0 | reward     0.00 | len     28
+[    79s] step   22,937,600 | reward    18.69 | len   1000
+[   136s] step   45,875,200 | reward    20.22 | len    995
+[   194s] step   68,812,800 | reward    25.74 | len    988
+[   228s] step   91,750,400 | reward    26.46 | len    978
+[   263s] step  114,688,000 | reward    27.26 | len    995
+[   297s] step  137,625,600 | reward    27.66 | len   1000
+[   332s] step  160,563,200 | reward    28.48 | len   1000
+[   366s] step  183,500,800 | reward    28.40 | len   1000
+[   400s] step  206,438,400 | reward    28.61 | len   1000
+Training complete in 401s (6.7 min). Saved /embodied/demo_a/runs_go1/go1_20260719-030458.pkl

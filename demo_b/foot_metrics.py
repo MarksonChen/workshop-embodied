@@ -11,9 +11,14 @@ Given a qpos(T,74) trajectory in the rodent convention: FK to world paw position
 """
 import math
 import numpy as np
-from constants import FPS
-from mujoco_rodent import build_model
-from geometry import quat2mat, mat2quat
+try:
+    from .constants import FPS
+    from .mujoco_rodent import build_model
+    from .geometry import quat2mat, mat2quat
+except ImportError:  # pragma: no cover
+    from constants import FPS
+    from mujoco_rodent import build_model
+    from geometry import quat2mat, mat2quat
 
 CONTACT_SITES = ("toe_L", "toe_R", "finger_L", "finger_R")   # the four ground-contact paw tips
 FLOOR_Z = 0.0

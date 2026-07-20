@@ -11,7 +11,10 @@
 import math
 from pathlib import Path
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F
-from constants import FM, DM, K, DEV
+try:  # package import (``python -m demo_b...``) and workshop script import.
+    from .constants import FM, DM, K, DEV
+except ImportError:  # pragma: no cover - exercised by direct script entry points.
+    from constants import FM, DM, K, DEV
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -76,6 +79,11 @@ class MotionVAE(nn.Module):
     def decode(self, z):                                    # (B,16,DM) -> (B,64,FM)
         return self.dec(z.transpose(1, 2)).transpose(1, 2)
 
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        latent = mu + torch.randn_like(mu) * (0.5 * logvar).exp()
+        return self.decode(latent), mu, logvar
+
 
 # ---------------------------------------------------------------- the transition: a standard Transformer
 def pos_enc(T, d, device):
@@ -101,8 +109,32 @@ class SimpleTrans(nn.Module):
         x = self.inp(hist); x = x + pos_enc(x.shape[1], x.shape[2], x.device)[None]
         return self.nf(self.enc(x))[:, -1]
 
+    def predict_from_context(self, context, cmd):
+        """Predict from a context already computed by :meth:`context`.
+
+        This is algebraically identical to ``predict`` and lets downstream closed-loop
+        controllers reuse the context they expose to a policy instead of running the
+        Transformer twice.
+        """
+        return self.out(torch.cat([context, self.cmd(cmd)], -1)).view(-1, K, DM)
+
     def predict(self, hist, cmd, sid=None):                 # sid is ignored (no per-session embedding)
-        return self.out(torch.cat([self.context(hist), self.cmd(cmd)], -1)).view(-1, K, DM)
+        return self.predict_from_context(self.context(hist), cmd)
+
+    def predict_next(self, hist, cmd):
+        """Conditional mean of the next normalized motion token."""
+        return self.predict(hist, cmd)[:, 0]
+
+    def log_prob_next(self, hist, next_token, cmd, sigma):
+        """Mean log likelihood per latent dimension under a fixed Gaussian.
+
+        ``SimpleTrans`` is still trained with MSE.  This method merely exposes
+        the equivalent probabilistic interpretation used as Demo E's frozen
+        reward; it does not introduce another learned head.
+        """
+        sigma = torch.as_tensor(sigma, dtype=hist.dtype, device=hist.device)
+        error = (next_token - self.predict_next(hist, cmd)) / sigma
+        return -0.5 * (error.square() + 2 * sigma.log() + math.log(2 * math.pi)).mean(-1)
 
     def loss(self, hist, fut, cmd, sid=None):
         return F.mse_loss(self.predict(hist, cmd), fut)
@@ -111,10 +143,23 @@ class SimpleTrans(nn.Module):
 def load_motor(ckpt=ASSETS / "motor_standalone.pt"):
     """frozen tokenizer + the simplified transition + norm constants + a bundled real seed window."""
     d = torch.load(ckpt, map_location=DEV, weights_only=False)
-    mv = MotionVAE().to(DEV); mv.load_state_dict(d["motion"]); mv.eval()
+    # ``rl_standalone`` is the known-good pre-Demo-E checkpoint.  It predates
+    # explicit metadata, so infer its tokenizer shape from the saved weights.
+    # Newer bundles carry the same values in ``motion_cfg``.  Supporting both
+    # here makes regression comparisons exact rather than approximate.
+    motion_cfg = dict(d.get("motion_cfg", {}))
+    first_weight = d["motion"]["enc.0.conv.weight"]
+    motion_cfg.setdefault("fm", int(first_weight.shape[1]))
+    motion_cfg.setdefault("hid", int(first_weight.shape[0]))
+    motion_cfg.setdefault("dm", int(d["motion"]["to_mu.conv.weight"].shape[0]))
+    if motion_cfg["fm"] != int(np.asarray(d["mmean"]).shape[0]):
+        raise ValueError("motion tokenizer and normalization feature dimensions disagree")
+    mv = MotionVAE(**motion_cfg).to(DEV); mv.load_state_dict(d["motion"]); mv.eval()
     for p in mv.parameters(): p.requires_grad_(False)
     m = SimpleTrans(**d["model_cfg"]).to(DEV); m.load_state_dict(d["trans"]); m.eval()
     norms = {k: np.asarray(d[k], np.float32) for k in ("zmean", "zstd", "cmean", "cstd", "mmean", "mstd")}
+    norms["sigma"] = np.asarray(d.get("sigma", 1.0), np.float32)
+    norms["logp_clip"] = np.asarray(d.get("logp_clip", [-20.0, 0.0]), np.float32)
     seed = dict(feat=np.asarray(d["seed_feat"], np.float32), xy=np.asarray(d["seed_xy"], np.float32),
                 yaw=np.asarray(d["seed_yaw"], np.float32), sid=0, name=d.get("seed_name", ""))
     return mv, m, norms, seed

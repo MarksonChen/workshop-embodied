@@ -1,0 +1,26 @@
+shape=square  4 waypoints  fwd_max=0.162 m/step  turn_max=0.991 rad/step
+  reached wp1 at step 15 (10.2s), dist 0.101 m
+  reached wp2 at step 30 (19.2s), dist 0.166 m
+  reached wp3 at step 49 (30.7s), dist 0.149 m
+  reached wp4 at step 68 (42.2s), dist 0.118 m
+REACHED 4/4  |  final min-dist to each wp (m): [0.023, 0.002, 0.027, 0.0]
+[wp/square     ] 2112f (42.2s)  skate 0.0028  pen mean 14.57mm max  92.85mm ( 99% frames)  jerk   739.8  minz  -92.8mm
+  [plot] /home/markson/projects/canvas/rl/out/waypoint_square.png
+  [video] /home/markson/projects/canvas/rl/out/waypoint_square.mp4
+shape=star  5 waypoints  fwd_max=0.162 m/step  turn_max=0.991 rad/step
+  reached wp1 at step 15 (10.2s), dist 0.117 m
+  reached wp2 at step 38 (24.3s), dist 0.111 m
+  reached wp3 at step 59 (37.1s), dist 0.152 m
+  reached wp4 at step 82 (51.2s), dist 0.165 m
+  reached wp5 at step 107 (66.6s), dist 0.125 m
+REACHED 5/5  |  final min-dist to each wp (m): [0.035, 0.025, 0.072, 0.09, 0.125]
+[wp/star       ] 3328f (66.6s)  skate 0.0028  pen mean 12.46mm max  91.66mm ( 99% frames)  jerk   738.1  minz  -91.7mm
+  [plot] /home/markson/projects/canvas/rl/out/waypoint_star.png
+  [video] /home/markson/projects/canvas/rl/out/waypoint_star.mp4
+shape=zigzag  4 waypoints  fwd_max=0.162 m/step  turn_max=0.991 rad/step
+  reached wp1 at step 13 ( 9.0s), dist 0.159 m
+  reached wp2 at step 36 (23.0s), dist 0.142 m
+  reached wp3 at step 79 (49.9s), dist 0.154 m
+REACHED 3/4  |  final min-dist to each wp (m): [0.063, 0.047, 0.035, 0.8]
+[wp/zigzag     ] 3712f (74.2s)  skate 0.0023  pen mean 11.01mm max  88.00mm ( 99% frames)  jerk   745.7  minz  -88.0mm
+  [plot] /home/markson/projects/canvas/rl/out/waypoint_zigzag.png

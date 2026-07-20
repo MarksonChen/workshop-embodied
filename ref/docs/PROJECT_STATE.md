@@ -1,11 +1,34 @@
 # Embodied — Project State & Next Steps
 
-_Last updated: 2026-07-18_
+_Last updated: 2026-07-20_
 
 A working log of the neuromechanical rodent-control project: what it is, what's
 built, what's proven, what's uncertain, and what to do next. Written as a handoff
 document — someone (or some agent) picking this up should be able to continue
 from here without re-deriving anything.
+
+> **Workshop overlay (updated 2026-07-20).** Sections 1–8 below preserve the original
+> `rl/` joystick project history. The core presentation is now Demo A (PPO),
+> Demo B (conditional motion learning), and Demo E (the frozen Demo B
+> likelihood added to physical RodentJoystick PPO). Demo C and Demo D remain
+> research references but are no longer in the live run of show. See
+> [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md), [demo_e.md](demo_e.md),
+> [demo_c.md](demo_c.md), and [demo_d.md](demo_d.md). Aligned Demo E now
+> deliberately **does** reuse the published decoder described below as frozen,
+> shared motor infrastructure in both controlled arms. Demo B has been restored
+> to the original 281-D Coltrane model after controlled Freddie trials produced
+> severe twitching. Its unchanged generator walks and its Gaussian wrapper has
+> strong command discrimination, but its current calibration is in-sample.
+> Demo E pipelines v1/v2 (direct actuator and Freddie/85-D) and pipeline v4's
+> forwarded-reset experiments are rejected. Pipeline v6 now combines literal
+> native reset/autoreset, the 281-D marker bridge, masking of two
+> source-constant channels, exact 0.62 s arc commands, and a separately exported
+> conditional scorer. That scorer clears frozen source/physical gates on two
+> training seeds. Its first 9.83M-transition E1 diagnostic took 9.71 minutes and
+> learned to stand almost upright on two legs, but not to locomote (about 0.013
+> m/s at a 0.30 m/s command; torso-angle termination around 3.04 s). A paired,
+> transition-matched E0/E1 result and full gait-onset budget remain open. See
+> `demo_e/experiment/TEN_MINUTE_E1.md` for the audited result.
 
 ---
 
@@ -43,6 +66,11 @@ scratch. The original imitation encoder is discarded. See Section 5 for why
 embodied/
 ├── pyproject.toml        uv project (py3.12); track-mjx editable + mirrored git pins
 ├── uv.lock
+├── demo_a/               PPO quadruped workshop demo (complete)
+├── demo_b/               self-supervised kinematic rodent demo (complete)
+├── demo_c/               archived workshop prototype: world-action + PPO + neural eval
+├── demo_d/               archived workshop prototype: hindsight-command torque PPO
+├── demo_e/               frozen-motion-likelihood + paired RodentJoystick PPO
 ├── rl/                   OUR code (see Section 3)
 │   ├── check_compat.py       proprioception-compatibility check (277 == 277)
 │   ├── run_imitation.py      roll out + render the published imitation policy
@@ -109,11 +137,13 @@ standing payoff to `exp(-0.23²/0.05) ≈ 0.35`. Locomotion emerges:
 | metric | baseline (sigma 0.25) | fixed (sigma 0.05) |
 | --- | --- | --- |
 | eval `vx` (random cmds) | 0.024 → 0.040 (flat, to 94 M) | 0.001 → 0.048 → 0.085 → **0.097** (climbing, by 52 M) |
-| pinned `vx=0.3` render | 0.02–0.03 m / ~0.01 m/s | **0.510 m / 0.204 m/s** (68 % of command) |
+| pinned `vx=0.3` render | 0.02–0.03 m / ~0.01 m/s | **0.373 m / 0.149 m/s over 2.5 s** (steady gait) |
 
-That's a ~20× improvement in a straight-line walk, at 52 M steps (~$2.6). The
-eval average (0.097) understates it because it mixes in zero/low/turning
-commands; on a clean "go straight" command the policy does 0.204 m/s.
+That's a large improvement in a straight-line walk at 52 M steps. The corrected
+renderer pins all three command copies (reward, flattened actor observation,
+and nested decoder observation); the confirmed 2.5 s clip averages 0.149 m/s.
+Older 0.204 m/s notes predate that renderer audit and should not be cited as the
+current fixed-command measurement.
 
 **Caveat / open question:** the `vx` climb was still flattening at 52 M
 (slope +.047, +.037, +.012 over successive 13 M intervals), so sigma-alone may

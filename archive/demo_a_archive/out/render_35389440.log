@@ -1,0 +1,18 @@
+WARNING: Attach conflict when attaching 'rat', policy is 'warning'
+iterations: parent has 100 (default), child has 6, keeping parent value
+ls_iterations: parent has 50 (default), child has 6, keeping parent value
+solver: parent has 2 (default), child has 1, keeping parent value
+
+/embodied/.venv/lib/python3.12/site-packages/vnl_playground/tasks/rodent/base.py:150: UserWarning: Attach conflict when attaching 'rat', policy is 'warning'
+iterations: parent has 100 (default), child has 6, keeping parent value
+ls_iterations: parent has 50 (default), child has 6, keeping parent value
+solver: parent has 2 (default), child has 1, keeping parent value
+  self._mj_model = self._spec.compile()
+/embodied/.venv/lib/python3.12/site-packages/orbax/checkpoint/_src/serialization/jax_array_handlers.py:749: UserWarning: Sharding info not provided when restoring. Populating sharding info from sharding file. Please note restoration time will be slightly increased due to reading from file. Note also that this option is unsafe when restoring on a different topology than the checkpoint was saved with.
+  warnings.warn(
+Rolled out 274 steps (2.74s); FELL at step 274
+Forward displacement +1.257 m -> mean speed +0.459 m/s | lateral drift -0.584 m | min root-z -0.029 m
+Cameras: ['close_profile-rodent', 'back-rodent', 'side-rodent', 'side_alt-rodent', 'top-rodent', 'egocentric-rodent'] -> using 'close_profile-rodent'
+/usr/lib/python3.12/subprocess.py:1885: RuntimeWarning: os.fork() was called. os.fork() is incompatible with multithreaded code, and JAX is multithreaded, so this will likely lead to a deadlock.
+  self.pid = _fork_exec(
+Wrote demo_a/out/demoa_35389440.mp4  (274 frames @ 100 fps)

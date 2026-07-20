@@ -1,0 +1,49 @@
+[cache] HIT ds_coltrane_8_motion
+[assemble] 8 sessions, 0 units; crops train=1253 val_search=192 val_audit=145 test_final=150
+[build] ready in 0s
+[P2] 492 two-forward windows (WIN=24); 8 sess; steps 14500
+/home/markson/projects/canvas/rl/train_phase2.py:80: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  print(f"    step={step:5d} ({time.time()-t0:4.0f}s) loss={float(loss):.4f} rho={rho:.2f}", flush=True)
+    step=    0 (   0s) loss=1.9656 rho=0.00
+    step=  500 (  22s) loss=0.4357 rho=0.00
+    step= 1000 (  43s) loss=0.0871 rho=0.01
+    step= 1500 (  64s) loss=0.0097 rho=0.03
+    step= 2000 (  86s) loss=0.0052 rho=0.05
+    step= 2500 ( 107s) loss=0.0028 rho=0.07
+    step= 3000 ( 128s) loss=0.0031 rho=0.10
+    step= 3500 ( 149s) loss=0.0028 rho=0.14
+    step= 4000 ( 171s) loss=0.0043 rho=0.18
+    step= 4500 ( 192s) loss=0.0021 rho=0.22
+    step= 5000 ( 213s) loss=0.0029 rho=0.27
+    step= 5500 ( 234s) loss=0.0028 rho=0.31
+    step= 6000 ( 256s) loss=0.0031 rho=0.37
+    step= 6500 ( 277s) loss=0.0017 rho=0.42
+    step= 7000 ( 299s) loss=0.0023 rho=0.47
+    step= 7500 ( 320s) loss=0.0035 rho=0.53
+    step= 8000 ( 342s) loss=0.0018 rho=0.58
+    step= 8500 ( 363s) loss=0.0016 rho=0.63
+    step= 9000 ( 385s) loss=0.0018 rho=0.69
+    step= 9500 ( 406s) loss=0.0018 rho=0.73
+    step=10000 ( 428s) loss=0.0015 rho=0.78
+    step=10500 ( 449s) loss=0.0016 rho=0.82
+    step=11000 ( 470s) loss=0.0013 rho=0.86
+    step=11500 ( 492s) loss=0.0016 rho=0.90
+    step=12000 ( 512s) loss=0.0011 rho=0.93
+    step=12500 ( 534s) loss=0.0014 rho=0.95
+    step=13000 ( 556s) loss=0.0015 rho=0.97
+    step=13500 ( 578s) loss=0.0017 rho=0.99
+    step=14000 ( 600s) loss=0.0012 rho=1.00
+[P2] saved -> /home/markson/projects/canvas/rl/out/motor_phase2.pt
+
+[P2] foot quality (hindsight 8 s):
+[P2/coltrane_2 ]  448f ( 9.0s)  skate 0.0029  pen mean  5.12mm max  27.39mm (100% frames)  jerk   742.1  minz  -27.4mm
+  [video] /home/markson/projects/canvas/rl/out/phase2_coltrane_2021_07_29_1.mp4
+[P2/coltrane_2 ]  448f ( 9.0s)  skate 0.0044  pen mean  2.49mm max  23.51mm ( 94% frames)  jerk  1090.6  minz  -23.5mm
+  [video] /home/markson/projects/canvas/rl/out/phase2_coltrane_2021_07_30_1.mp4
+
+[P2] 16 s straight -- open-loop drift (the flying test):
+  [P2 straight 16s] final pitch +42 deg  |  head z max 0.093 m   (baseline +29 deg / 0.127 m)
+  [video] /home/markson/projects/canvas/rl/out/phase2_drift_straight.mp4
+
+[P2] done in 791s.

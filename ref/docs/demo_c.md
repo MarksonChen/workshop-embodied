@@ -1,279 +1,297 @@
-# Demo C — minimal WAM + RL: learn the next step, then learn what to do
+# Demo C — virtual-rodent world-action model + reinforcement learning
 
-_Revised 2026-07-19. Companion to [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md),
-[demo_a.md](demo_a.md), and the completed code in [`demo_a/`](../../demo_a/) and
-[`demo_b/`](../../demo_b/). This supersedes the research-oriented
+_Revised and implemented 2026-07-19. Companion to
+[WORKSHOP_PLAN.md](WORKSHOP_PLAN.md), the completed `demo_a/` and `demo_b/`, and
+[dataset.md](dataset.md). This supersedes the research-oriented proposal in
 [demo_c_prev.md](demo_c_prev.md)._
 
-**Status: plan only. First priority: make the definitions of SSL and RL visible.**
+> **Presentation status.** Retained as an implemented research reference. The
+> core workshop now presents Demos A, B, and planned E; see
+> [demo_e.md](demo_e.md).
 
-## 1. What a student should learn
+## 1. The pedagogical contract
 
-Demo A teaches:
+The audience starts with three definitions:
 
-> **RL:** PPO changes a policy so that its actions produce more cumulative reward.
+> **Self-supervised learning (SSL)** learns from targets constructed from the data
+> itself. No person labels the correct target.
 
-Demo B teaches:
+> **Reinforcement learning (RL)** changes a policy so its actions obtain more future
+> reward. It receives scalar consequences, not correct target actions.
 
-> **SSL:** a model learns from targets constructed from the data itself; in an
-> autoencoder, the input is also the reconstruction target.
+> **A world-action model loop** uses a learned action-conditioned world transition to
+> answer “what happens if I do this?”, then uses a policy to answer “what should I do?”
 
-Demo C should teach exactly one new idea:
+Demo A already teaches PPO on a Brax quadruped. Demo B teaches a convolutional
+autoencoder and predictive rodent motion model. Demo C should therefore introduce no
+new large algorithm. It freezes Demo B's world factor and lets the familiar PPO
+algorithm interact with it.
 
-> **WAM + RL:** use self-supervised prediction to learn how actions change the world,
-> then let PPO learn what actions to take by interacting with that learned world.
-
-By the end, a student should be able to point to the two different learning signals:
-
-- the world model minimizes **next-state prediction error**; its target comes from the
-  next row of a recorded trajectory;
-- the policy maximizes **return**; PPO receives rewards, not target actions.
-
-Keeping those objectives visually and programmatically separate is more important than
-model novelty or final task performance.
-
-## 2. The whole demo in one diagram
+The two learning signals remain separate and visible:
 
 ```text
-REAL SIMULATOR (data collection)
-
-    state x_t ── action a_t ──> state x_{t+1}
-         \___________________________/
-              shift the trajectory
-                       │
-                       ▼
-SSL: train W_phi(x_t, a_t) ≈ x_{t+1}
-
-
-LEARNED SIMULATOR (policy training)
-
-    x_t ──> PPO policy pi_theta ──> a_t ──> frozen W_phi ──> x_hat_{t+1}
-                  ▲                                      │
-                  └──────── known task reward ───────────┘
+L_SSL = MSE(predicted future motion, recorded future motion)
+J_RL  = expected sum of food-reaching rewards
 ```
 
-Workshop line:
+The world model never sees reward. PPO never sees a target action. PPO does not
+backpropagate through the world model.
 
-> **SSL learns “what happens if I do this?” RL learns “what should I do?”**
+## 2. What “WAM” means here
 
-## 3. Connection to the assigned paper
-
-Section 3.1 of [WorldModel.pdf](../papers/WorldModel.pdf) describes policy models and
-controllable world models as different queries of one joint predictive-control
-distribution. Demo C uses the simplest explicit factorization of that idea:
+Sections 3 and 4.1 of [WorldModel.pdf](../papers/WorldModel.pdf) motivate joining a
+controllable world factor with an action/policy factor and using the learned world for
+policy optimization. Demo C implements the smallest explicit factorization:
 
 ```text
-p(x_{t+1}, a_t | x_t)
-    = pi_theta(a_t | x_t) p_phi(x_{t+1} | x_t, a_t)
-      └── action / policy ┘ └── action-conditioned world model ┘
+p(z_{t+1:t+8}, a_t | z_{t-7:t}, g_t)
+  = πθ(a_t | g_t, body_t, [context_t])
+    pφ(z_{t+1:t+8} | z_{t-7:t}, a_t)
 ```
 
-In this plan, **minimal WAM** means this factorized, closed world-and-action loop: the
-world factor is the transition model and the action factor is the PPO policy. It does not
-mean a unified video-action transformer. The factors remain separate so beginners can see
-which one is trained by SSL and which one is trained by RL.
+This is a **pedagogical state-space analogue**, not a claim to reproduce a unified
+video-action transformer, mixture-of-experts backbone, or current WAM state of the art.
+Keeping the factors explicit is the feature: a new graduate can point to the blue SSL
+arrow and the orange RL arrow.
 
-Section 4.1 supplies the execution recipe: freeze the learned transition model, use it as
-an interactive simulator, and optimize the policy on imagined transitions. We use PPO
-because students have already learned it in Demo A. Section 3's single-backbone,
-mixture-of-experts, video, and latent-policy variants are useful context, not requirements
-for this demonstration.
+## 3. Why Demo C uses the Demo B rat
 
-## 4. Minimal system
+The earlier plan reused Demo A's Fetch quadruped. The neuroscience goal makes that the
+wrong body:
 
-### Environment and task
+- the local recordings contain rat pose and rat neural activity;
+- Demo B already supplies a causal rat motion tokenizer and an action-conditioned
+  predictor;
+- the repository already has a physical MIMIC-MJX rat and a frozen joystick policy.
 
-Reuse Demo A's Brax `FetchRun` quadruped, action space, locomotion task, reward, and PPO
-implementation. Demo C changes only the source of the transition:
+The actual Demo A network cannot be evaluated fairly on rat recordings: it expects a
+different body, observation convention, action space, and task. Demo C therefore uses
+a **matched goal-only rodent PPO** as the RL-only/Demo-A-like comparator. It differs
+from WAM+RL only by the predictive context in its observation.
 
-- Demo A: `next_state = real_brax.step(state, action)`
-- Demo C: `next_state = learned_world.step(state, action)`
+This means the talk has two levels of comparison:
 
-Initialize the policy from an **early Demo A decile checkpoint** that can stand and move
-but has not solved the task. Demo A has already shown PPO from scratch; Demo C should show
-the new idea—PPO **post-training inside a learned simulator**—without asking a random
-policy to leave the world model's training distribution immediately. Select the earliest
-decile that stays upright for the measured dream horizon, and record that choice before
-post-training. This also matches Section 4.1's reinforcement-post-training framing. The
-fully trained Demo A policy remains an upper reference, not the initialization.
+1. Demos A/B/C are a teaching progression, not a controlled ablation.
+2. Goal-only versus WAM-context PPO inside Demo C is a controlled rodent ablation.
 
-### Teaching state
-
-Use Demo A's 101-D observation plus the three quantities needed to evaluate the existing
-task visibly and without a learned reward model:
+## 4. The implemented loop
 
 ```text
-x_t = [observation_t, forward_speed_t, upright_t, torso_height_t]
+REAL CONTINUOUS RODENT RECORDING
+
+64 frames ── frozen causal MotionVAE ──> 16 latent tokens
+             first 8 + root command ──> SimpleTrans ──> predicted last 8
+                         recorded last 8 ──────────────> SSL MSE target
+
+
+SHORT LEARNED ENVIRONMENT
+
+history ──> frozen predictive context ───────────────┐
+goal/body state ─────────────────────────────────────┼─> PPO policy ─> action
+                                                    │                 │
+history + action ─> frozen predictor ─> decoder ─> body displacement  │
+                                                    │                 │
+food progress/reach reward <────────────────────────┴─────────────────┘
+
+
+REALITY CHECK
+
+frozen navigator ─> high-level velocity command ─> frozen joystick ─> MJX rat
 ```
 
-The real environment can provide this vector during collection and deployment. The
-learned model predicts the next vector. The dream environment then computes Demo A's
-existing reward and fall condition from the predicted speed, upright value, height, and
-the current action. The PPO policy still sees only Demo A's original 101-D observation;
-the three appended values are simulator state used for reward and termination. Thus the
-policy input remains the same between Demo A and Demo C.
+### 4.1 World factor: predictive SSL
 
-This boundary is deliberate:
-
-- **learn dynamics from data** with SSL;
-- **keep the task reward hand-written** and identical to Demo A;
-- **use the reward only for PPO**.
-
-Do not train reward or termination heads in the first version. Calling a combined
-`(next state, reward, done)` loss “pure SSL” would blur the lesson.
-
-### World model
-
-Use one deterministic residual MLP:
+The frozen MotionVAE is Demo B's convolutional autoencoder. A standard six-layer
+Transformer encodes eight 80-ms latent tokens and a small MLP predicts the next eight
+tokens from a three-dimensional egocentric displacement/turn command.
 
 ```text
-delta_hat = MLP(normalize([x_t, a_t]))
-x_hat_{t+1} = x_t + denormalize(delta_hat)
-L_SSL = mean((x_hat_{t+1} - x_{t+1})^2)
+history: 8 × 16       command: [forward, lateral, turn]
+context: 192          target:  8 × 16 recorded future latents
 ```
 
-Two hidden layers are enough for the first attempt. Normalize each state and action
-feature, clip actions to the real environment's limits, and fit only one-step transitions.
-Implement it in JAX so the learned step remains compatible with Demo A's vectorized,
-jitted environment interface. There is no VQ bottleneck, diffusion model, transformer,
-planner, ensemble, or differentiation through Brax.
+The implementation first tested the bundled Demo B transition. Its small original
+training scope did not pass every held-out session gate. Following the frozen-metric
+practice in `canvas/misc/autoresearch.md`, the architecture and objective were left
+unchanged while data coverage was broadened:
 
-Why not copy Demo B's convolutional architecture? Demo B's input is structured motion,
-where convolution is sensible; Demo A exposes a compact state vector. The continuity is
-in the **self-supervised objective**:
+- 12 complete training sessions: two each from art, bud, coltrane, duke, freddie,
+  and gerry;
+- two complete checkpoint-selection sessions;
+- four untouched final sessions: two DLS/coltrane and two MC/freddie.
+
+Every sample is a genuine contiguous 64-frame window. Motion-mapper labels are allowed
+to flicker, but windows are never stitched. The frozen checkpoint is the best
+validation step, not the last training step; the convergence probe found that step 500
+was best and later steps overfit.
+
+The final gate is normalized skill over latent persistence:
 
 ```text
-Demo B: x                 -> reconstruct x
-Demo C: (x_t, action_t)   -> predict x_{t+1}
+skill = 1 - MSE(world prediction) / MSE(repeat last latent)
 ```
 
-This is a feature, not a compromise: students learn that “self-supervised” describes how
-targets are obtained, not whether the network contains convolutions.
+It passed all four untouched sessions, with session-balanced mean skill +39.5%.
 
-## 5. Four-stage demonstration
+### 4.2 Dream transition
 
-### Stage 0 — collect transitions in the real simulator
+One transition predicts 0.64 s of motion. The model decodes the old history plus the
+predicted future. Local root velocity and orientation deltas are integrated to update
+the virtual rat's position, yaw, and measured body velocity.
 
-Build `D = {(x_t, a_t, x_{t+1})}` from existing Demo A checkpoints. Use rollouts from
-several training deciles, add modest action noise, and include some random-policy rollouts.
-The mix supplies standing, falling, partially learned, and running transitions; a purely
-random quadruped falls too quickly to teach useful locomotion dynamics.
+Crucially, the environment does **not** copy the requested command into the next state.
+Doing so would let PPO optimize an identity function rather than the learned world.
+Non-finite or physically extreme predictions terminate as invalid failures and are
+reported; the accepted runs have zero invalid transitions.
 
-Split by complete rollout, not by individual transitions, so adjacent frames cannot leak
-between train and validation sets. Rewards may be logged for later comparison, but they
-are not targets for `L_SSL`.
+### 4.3 Food-reaching task
 
-Teaching moment: construct the target live by shifting one trajectory by one row. No one
-annotates “the correct next state”; the trajectory supplies it.
-
-### Stage 1 — train and inspect the world factor
-
-Train the MLP on one-step prediction. Before any RL, show two held-out diagnostics:
-
-1. one-step error compared with the trivial baseline `x_hat_{t+1} = x_t`;
-2. a short open-loop rollout plotting predicted and real forward speed, upright value,
-   and one representative joint feature.
-
-The plot should visibly stay close at first and then drift. That is not hidden: it
-motivates short imagined rollouts and teaches that a learned simulator is approximate.
-
-### Stage 2 — run PPO in short dreams
-
-Freeze the world model. Wrap it behind the same `reset` / `step` interface used by Demo A
-and run the same PPO implementation from the selected early-checkpoint initialization.
-
-- Reset from recorded healthy states, including the standard standing start.
-- Roll the world model for a short fixed horizon, initially 20 steps.
-- At the horizon, end the imagined episode and reset to another recorded state.
-- Select the final horizon from the held-out rollout plot; do not roll farther merely to
-  obtain more synthetic data.
-
-The phrase for the audience is **“dream briefly, then wake up.”** It conveys the reason
-for the resets without introducing a second model-based RL algorithm. PPO treats the
-world model as an environment; it does not backpropagate through it.
-
-### Stage 3 — reality check
-
-Freeze the policy and replace `learned_world.step` with the real Brax `FetchRun.step`. No
-fine-tuning is allowed for the first evaluation. Render the quadruped and report:
-
-- return, forward speed, upright time, and fall rate in the learned simulator;
-- the same four quantities in the real simulator;
-- the unchanged early checkpoint as the before-post-training baseline;
-- random policy and fully trained Demo A PPO as lower and upper reference points.
-
-The important comparison is the **dream-to-real gap**, not whether Demo C beats Demo A.
-If the policy performs well only in the dream, label that as model exploitation rather
-than as successful transfer.
-
-After showing the zero-shot result, an optional short real-simulator PPO fine-tune may be
-used as a clearly labeled extension. It demonstrates that imagined practice can provide
-an initialization while real feedback corrects model error; it is not part of the minimum
-demo.
-
-## 6. Success gates
-
-The minimum demo is complete only when all four gates pass:
-
-1. **SSL is real:** held-out one-step prediction beats the no-change baseline.
-2. **The trust horizon is measured:** the chosen imagination horizon lies inside the
-   region where held-out rollout error remains acceptably small.
-3. **RL is real:** PPO improves return over its early-checkpoint initialization inside the
-   frozen world model.
-4. **The loop closes:** without real-environment fine-tuning, the post-trained policy
-   improves real-simulator locomotion over that unchanged starting checkpoint.
-
-Gate 4 need not approach Demo A's fully trained policy. It does need to improve over the
-seed checkpoint and remain above random; otherwise the workshop has demonstrated model
-exploitation, not yet WAM + RL transfer. The first remedies are broader transition
-coverage and a shorter dream horizon—not adding a research-method stack. Starting PPO
-from random can remain an optional stress test after the post-training demo works.
-
-## 7. What to show in the workshop
-
-Keep the live narrative to five beats:
-
-1. Recall Demo B's autoencoder and its data-derived reconstruction target.
-2. Shift a rollout by one step and add the action: this creates the world-model training
-   pairs.
-3. Show predicted versus real short trajectories: the learned world works locally and
-   drifts with time.
-4. Load an early Demo A checkpoint, change one environment switch from `real` to `dream`,
-   and watch the familiar PPO curve rise.
-5. Switch back to `real` and render the frozen dream-trained policy.
-
-On the final slide, color only two arrows: blue for prediction error (SSL) and orange for
-reward/return (RL). Avoid a taxonomy of contemporary WAM architectures.
-
-## 8. Implementation layout and order
+Each episode places one food target 0.35–0.75 m away in the rat's forward semicircle.
+The policy has eight 0.64-s decisions. Its two bounded actions map to forward
+displacement and turn commands already supported by Demo B.
 
 ```text
-demo_c/
-  README.md          commands, diagram, and expected workshop outputs
-  collect.py         Demo A rollouts -> train/validation transition files
-  world_model.py     residual MLP, normalization, SSL training, drift plot
-  dream_env.py       frozen model behind the Demo A-style environment interface
-  train_policy.py    the existing PPO configuration with real|dream environment switch
-  evaluate.py        dream-vs-real metrics and real-simulator render
+reward = 10 × reduction_in_distance
+       + 1 × reached_food
+       - 0.01 time
+       - 0.01 turn²
+       - invalid_penalty
 ```
 
-Build in this order:
+The reward is deliberately known and readable. There is no learned reward head,
+planner, curiosity bonus, replay buffer, or end-to-end world/policy fine-tuning.
 
-1. Implement the teaching-state wrapper and verify its reward/done calculation matches
-   `FetchRun` on recorded real transitions.
-2. Collect decile-plus-noise data and produce the held-out prediction plot.
-3. Add the dream environment and test reset, action clipping, reward, and termination.
-4. Reuse Demo A PPO unchanged at the algorithm level.
-5. Run the zero-shot reality check and record all success-gate metrics.
+### 4.4 Matched PPO conditions
 
-## 9. Explicitly out of scope
+Both policies use a two-layer, 128-unit tanh actor-critic and the same tanh-squashed
+Gaussian action distribution, PPO hyperparameters, rollout data, and seeds.
 
-The following ideas from [demo_c_prev.md](demo_c_prev.md) remain possible research
-directions, but are removed from the workshop demo: differentiable MJX, mixed-mode
-autodiff, LAPO, an intention-IDM, VQ latents, HILP, MTM, TD-MPC2 losses, learned planning,
-real-rat mocap alignment, and neural-recording comparisons.
+| input | goal-only PPO | WAM-context PPO |
+|---|:---:|:---:|
+| egocentric food x/y + distance | yes | yes |
+| body forward/lateral/yaw velocity | yes | yes |
+| previous action | yes | yes |
+| frozen 192-D predictive context | no | yes |
 
-Likewise, this minimal demo does **not** establish that its behavior matches the real-rat
-distribution merely because its world model fits self-collected simulator data. It teaches
-the mechanics of combining SSL and RL. A later rodent-data extension can test the stronger
-distributional and neuroscience claims after the basic lesson works.
+The frozen budget is 786,432 dream steps with 256 environments and seeds 0, 1, and 2.
+A longer convergence probe selected the budget before the reportable comparison.
+Success is evaluated deterministically on 1,024 fixed held-out episodes. The WAM and
+goal-only success means are 0.6445 and 0.6393; their +0.0052 difference is smaller than
+the predeclared two-standard-deviation noise floor of 0.0088. They are functionally
+matched, which makes the later representation comparison easier to interpret.
+
+### 4.5 Zero-shot physics check
+
+At deployment, no network is updated. The navigator's high-level command is held for
+0.64 s by the existing frozen MIMIC joystick, which produces intentions for the MJX
+rat. This is an honest test of navigation transfer across the dream/physics boundary,
+but the scope must be said aloud:
+
+> Demo C learns the high-level navigator in dreams; it reuses an existing physical
+> locomotion primitive.
+
+The independently measured response-curve `calibrated` bridge is reportable: it
+inverts the joystick's observed low-speed dead zone to realize requested displacement,
+without changing the policy. The uncalibrated `raw`, rejected scalar `inverse_gain`,
+and model-decoded bridges remain labelled diagnostics and are not silently substituted.
+
+On the frozen eight-goal suite, the response bridge gives 7/8 success for goal-only
+and 4/8 for WAM, with no falls. Raw transfer was 0/8 and 2/8. The fact that WAM is
+matched in dreams but worse in physics is retained as a model-reliance/dream-to-real
+gap, not tuned away or presented as a functional advantage.
+
+## 5. Neural-population comparison
+
+### Question
+
+For matched real rat movements, do frozen representations explain held-out DLS/MC
+population activity, and does the WAM+RL policy resemble the data more than a matched
+RL-only policy?
+
+The comparison includes:
+
+- raw 281-D kinematics as a nuisance/reference ceiling;
+- Demo B's 16-D autoencoder latent;
+- Demo B's 192-D predictive context;
+- the final 128-D hidden state of all three goal-only PPO seeds;
+- the final 128-D hidden state of all three WAM PPO seeds.
+
+Policy seeds are averaged within a session before sessions are balanced. Units never
+cross sessions.
+
+### Alignment and leakage controls
+
+- Pose, representations, and spikes stay on the genuine continuous 80-ms token grid.
+- Spike counts sum four 20-ms bins and use only the dataset's `active_units` mask.
+- A two-second recorded future bearing acts as pseudo-food direction. Food distance is
+  fixed at the midpoint of the trained range, avoiding the rejected near-zero-goal
+  out-of-distribution probe.
+- Splits use 60-s blocks with 5-s gaps and require the entire eight-token history and
+  future-goal window inside one block.
+- PCA is fit on training rows only and fixed to at most 16 dimensions for every family.
+- The encoding metric is population bits/spike from a Poisson GLM against a train-rate
+  null. A 20-s circular shift stays within each split block.
+- The RSA metric uses nine speed × turn conditions, crossvalidated/shrinkage distances,
+  and a condition-label permutation test.
+- `loco` is primary. `all_matched` draws the same number of rows from the full behavior
+  distribution so subset size cannot explain the result.
+
+### Result and correct claim strength
+
+On locomotion, the WAM+RL policy has 0.0191 shift-corrected population bits/spike and
+RSA ρ = 0.701. The matched RL-only policy has 0.0082 and ρ = 0.575. Demo B's predictor
+has 0.0193 and ρ = 0.710.
+
+Therefore the workshop may say:
+
+> The action-conditioned SSL representation survives inside a policy that reaches
+> food. It is descriptively more neural-like than the matched RL-only policy while
+> preserving, rather than improving on, Demo B's predictive representation.
+
+It may **not** say that Demo C is statistically superior to Demo B or RL-only. There
+are only four independent sessions; the smallest possible two-sided exact
+sign-permutation p-value is 0.125. The all-behavior n-matched control also shows that
+slow temporal structure can dominate raw encoding scores. This is a workshop
+demonstration and a hypothesis generator, not a publication-level neural claim.
+
+## 6. Five workshop beats
+
+1. **Recall Demo B:** reconstruction is self-supervised because the input constructs
+   its own target.
+2. **Shift a rat trajectory:** history plus action predicts the recorded future; show
+   the persistence null and the 0.64-s horizon plot.
+3. **Freeze the blue network:** put PPO beside it and point separately to reward/return.
+4. **Run matched dreams:** show goal-only and WAM curves rising to essentially the same
+   food-reaching success.
+5. **Return to rat data and physics:** render zero-shot MJX control, then show the
+   neural table with its caveat that WAM+RL preserves rather than exceeds the predictor.
+
+The final audience sentence is:
+
+> **SSL learned a predictive rat-motion representation from what happened next; RL
+> learned which imagined actions reached food; together they made a goal-directed
+> controller that retained that representation.**
+
+## 7. Frozen gates
+
+| gate | criterion | result |
+|---|---|---|
+| SSL validity | positive skill over persistence on every untouched session | pass |
+| numerical validity | finite transitions and zero invalid rate | pass |
+| RL validity | both learned policies beat the random controller | pass |
+| matched function | success difference no larger than `2 × max(seed SD)` | pass |
+| physical loop | frozen policy executes in MJX with no fine-tuning | measured by `deploy_physics.py` |
+| neural feasibility | strict split, shift null, RSA, four full DLS/MC sessions | pass |
+| stronger neural claim | exact paired evidence that Demo C beats all baselines | not established |
+
+## 8. Implementation and reproducibility
+
+The runnable commands, file map, measured tables, and artifact locations are in
+[`demo_c/README.md`](../../demo_c/README.md). The append-only research narrative is in
+[`demo_c/experiment/DECISIONS.md`](../../demo_c/experiment/DECISIONS.md).
+
+The implementation follows the useful parts of `canvas/misc/autoresearch.md`: frozen
+metrics and budgets, convergence probes, a multi-seed noise floor, one-change
+iterations, rich diagnostics, genuine temporal continuity, atomic caches, strict
+long-block splits, and explicit keep/reject decisions. Neural data are a final test,
+not a hyperparameter-tuning signal.

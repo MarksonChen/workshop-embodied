@@ -31,7 +31,19 @@ rl/remote/.env
 
 # Demo B run artifacts (models/videos/logs)
 demo_b/out/
+demo_b/assets/motor_prior_jax.npz
+demo_b/assets/motor_metrics.json
+demo_b/assets/eligibility.json
 demo_b_archive/out/
+
+# Demo C caches, checkpoints, plots, videos, and append-only experiment tables
+demo_c/out/
+
+# Demo D reference caches, checkpoints, plots, videos, and experiment tables
+demo_d/out/
+
+# Demo E caches, checkpoints, reports, plots, and videos
+demo_e/out/
 
 # Demo A run artifacts
 demo_a/runs/

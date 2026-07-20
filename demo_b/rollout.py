@@ -1,9 +1,14 @@
 """Autoregressive rollout of the motor model + MuJoCo rendering. Self-contained."""
 import math
 import numpy as np, torch
-from constants import DEV, CLIP, H, K, NLAT, DM, FM, FPS
-from geometry import reconstruct_qpos, q0_from
-from mujoco_rodent import build_model, RH, RW
+try:
+    from .constants import DEV, CLIP, H, K, NLAT, DM, FM, FPS
+    from .geometry import reconstruct_qpos, q0_from
+    from .mujoco_rodent import build_model, RH, RW
+except ImportError:  # pragma: no cover
+    from constants import DEV, CLIP, H, K, NLAT, DM, FM, FPS
+    from geometry import reconstruct_qpos, q0_from
+    from mujoco_rodent import build_model, RH, RW
 
 
 def cmd_at(xy, yaw, f0):
@@ -31,7 +36,11 @@ def roll(m, mv, norms, seed, n_steps, command="constant", cmd_raw=None):
         cmd = (torch.tensor(np.asarray([c], np.float32), device=DEV) - cmean) / cstd
         stream.append(m.predict(torch.cat(stream, 0)[-H:][None], cmd, sidx)[0])
     Z = torch.cat(stream, 0) * zstd[0] + zmean[0]; nn_ = (Z.shape[0] // NLAT) * NLAT
-    gfeat = mv.decode(Z[:nn_].reshape(-1, NLAT, DM)).reshape(-1, FM).cpu().numpy() * ms + mm
+    # The pre-Demo-E model reconstructs the original 281-D body representation;
+    # the later checkpoint reconstructs 85 dimensions.  The asset's norms are
+    # the authoritative shape, not the module-level default.
+    feature_dim = int(np.asarray(mm).shape[0])
+    gfeat = mv.decode(Z[:nn_].reshape(-1, NLAT, DM)).reshape(-1, feature_dim).cpu().numpy() * ms + mm
     return reconstruct_qpos(gfeat, q0_from(gfeat[0], xy[0], yaw[0]))
 
 

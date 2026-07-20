@@ -1,0 +1,48 @@
+[cache] HIT ds_coltrane_8_motion
+[assemble] 8 sessions, 0 units; crops train=1253 val_search=192 val_audit=145 test_final=150
+[build] ready in 0s
+[P1:sm] 8 loco sess; frozen tok; w_feat=1.0 w_vc=0.0 w_sm=1.0
+[P1] 1344 motion windows; 8 sess; steps 14500
+/home/markson/projects/canvas/rl/train_phase1.py:84: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  print(f"    step={step:5d} ({time.time()-t0:4.0f}s) lat={float(l_lat):.4f} feat={float(l_feat):.4f} "
+    step=    0 (   1s) lat=0.9336 feat=0.1319 vc=0.0000 sm=1.0591 aw=0.00
+    step=  500 (  12s) lat=0.2877 feat=0.0510 vc=0.0000 sm=1.0977 aw=0.25
+    step= 1000 (  22s) lat=0.1748 feat=0.0350 vc=0.0000 sm=1.0082 aw=0.50
+    step= 1500 (  33s) lat=0.1226 feat=0.0303 vc=0.0000 sm=0.9331 aw=0.75
+    step= 2000 (  44s) lat=0.0918 feat=0.0261 vc=0.0000 sm=1.0057 aw=1.00
+    step= 2500 (  54s) lat=0.0770 feat=0.0236 vc=0.0000 sm=0.9361 aw=1.00
+    step= 3000 (  65s) lat=0.0759 feat=0.0237 vc=0.0000 sm=0.8344 aw=1.00
+    step= 3500 (  76s) lat=0.0718 feat=0.0229 vc=0.0000 sm=0.9678 aw=1.00
+    step= 4000 (  86s) lat=0.0707 feat=0.0223 vc=0.0000 sm=0.9417 aw=1.00
+    step= 4500 (  97s) lat=0.0693 feat=0.0227 vc=0.0000 sm=0.8926 aw=1.00
+    step= 5000 ( 108s) lat=0.0745 feat=0.0238 vc=0.0000 sm=0.8720 aw=1.00
+    step= 5500 ( 119s) lat=0.0678 feat=0.0226 vc=0.0000 sm=0.8525 aw=1.00
+    step= 6000 ( 130s) lat=0.0745 feat=0.0240 vc=0.0000 sm=0.9322 aw=1.00
+    step= 6500 ( 141s) lat=0.0752 feat=0.0239 vc=0.0000 sm=0.9717 aw=1.00
+    step= 7000 ( 151s) lat=0.0720 feat=0.0234 vc=0.0000 sm=0.9164 aw=1.00
+    step= 7500 ( 162s) lat=0.0707 feat=0.0230 vc=0.0000 sm=0.9253 aw=1.00
+    step= 8000 ( 173s) lat=0.0710 feat=0.0232 vc=0.0000 sm=0.9082 aw=1.00
+    step= 8500 ( 183s) lat=0.0712 feat=0.0235 vc=0.0000 sm=0.8583 aw=1.00
+    step= 9000 ( 194s) lat=0.0626 feat=0.0211 vc=0.0000 sm=0.9382 aw=1.00
+    step= 9500 ( 204s) lat=0.0717 feat=0.0234 vc=0.0000 sm=0.8345 aw=1.00
+    step=10000 ( 215s) lat=0.0753 feat=0.0251 vc=0.0000 sm=0.9673 aw=1.00
+    step=10500 ( 226s) lat=0.0679 feat=0.0225 vc=0.0000 sm=0.9751 aw=1.00
+    step=11000 ( 242s) lat=0.0675 feat=0.0221 vc=0.0000 sm=0.9051 aw=1.00
+    step=11500 ( 258s) lat=0.0697 feat=0.0226 vc=0.0000 sm=0.8951 aw=1.00
+    step=12000 ( 273s) lat=0.0669 feat=0.0222 vc=0.0000 sm=0.9962 aw=1.00
+    step=12500 ( 287s) lat=0.0692 feat=0.0227 vc=0.0000 sm=0.9002 aw=1.00
+    step=13000 ( 303s) lat=0.0730 feat=0.0236 vc=0.0000 sm=0.8341 aw=1.00
+    step=13500 ( 317s) lat=0.0667 feat=0.0225 vc=0.0000 sm=0.8807 aw=1.00
+    step=14000 ( 328s) lat=0.0617 feat=0.0212 vc=0.0000 sm=0.8221 aw=1.00
+[P1:sm] saved -> /home/markson/projects/canvas/rl/out/motor_phase1_sm.pt
+
+[P1] scores (baseline was 07_29 jerk 754 / 07_30 jerk 1095):
+[P1:sm/coltrane_2]  448f ( 9.0s)  skate 0.0028  pen mean  6.58mm max  27.57mm (100% frames)  jerk   657.0  minz  -27.6mm
+[P1:sm/coltrane_2+ff]  448f ( 9.0s)  skate 0.0019  pen mean  0.00mm max   0.00mm (  0% frames)  jerk   666.6  minz   -0.0mm
+  [video] /home/markson/projects/canvas/rl/out/phase1_sm_coltrane_2021_07_29_1.mp4
+[P1:sm/coltrane_2]  448f ( 9.0s)  skate 0.0036  pen mean  2.29mm max  16.67mm ( 93% frames)  jerk   864.8  minz  -16.7mm
+[P1:sm/coltrane_2+ff]  448f ( 9.0s)  skate 0.0029  pen mean  0.00mm max   0.00mm (  0% frames)  jerk   891.5  minz   -0.0mm
+  [video] /home/markson/projects/canvas/rl/out/phase1_sm_coltrane_2021_07_30_1.mp4
+
+[P1] done in 449s.

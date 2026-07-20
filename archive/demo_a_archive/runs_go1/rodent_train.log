@@ -1,0 +1,13 @@
+injecting model: /embodied/demo_a/models/rodent_go1.xml
+Training Go1JoystickFlatTerrain: 1e+08 steps, 8192 envs
+[    15s] step            0 | reward     0.00 | len     29
+[    62s] step   11,468,800 | reward    14.54 | len    995
+[    86s] step   22,937,600 | reward    18.33 | len    996
+[   125s] step   34,406,400 | reward    19.82 | len    992
+[   144s] step   45,875,200 | reward    19.41 | len    988
+[   162s] step   57,344,000 | reward    19.92 | len    996
+[   180s] step   68,812,800 | reward    21.54 | len    978
+[   199s] step   80,281,600 | reward    25.00 | len    995
+[   217s] step   91,750,400 | reward    26.03 | len    992
+[   236s] step  103,219,200 | reward    26.70 | len    987
+Training complete in 236s (3.9 min). Saved /embodied/demo_a/runs_go1/go1_20260719-041130.pkl

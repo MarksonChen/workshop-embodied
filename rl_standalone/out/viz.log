@@ -1,0 +1,30 @@
+/home/markson/projects/canvas/rl_standalone/models.py:94: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.enc = nn.TransformerEncoder(
+seed coltrane/2021_07_29_1  fwd=0.073 m/step  turn=0.251 rad/step  25 steps
+[drive/straight]  832f (16.6s)  skate 0.0030  pen  4.10mm (100%)  jerk   655.3
+    straight: span 0.92 x 1.00 m, net 0.95 m
+  [video] /home/markson/projects/canvas/rl_standalone/out/drive_straight.mp4
+[drive/circle  ]  832f (16.6s)  skate 0.0030  pen  6.22mm ( 99%)  jerk   839.3
+    circle: span 0.91 x 1.15 m, net 0.98 m
+  [video] /home/markson/projects/canvas/rl_standalone/out/drive_circle.mp4
+  [plot] /home/markson/projects/canvas/rl_standalone/out/drive_path.png
+/home/markson/projects/canvas/rl_standalone/models.py:94: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.enc = nn.TransformerEncoder(
+shape=square  4 wp  fwd_max=0.100  turn_max=0.530
+  reached wp1 at step 17 (11.5s), dist 0.121 m
+  reached wp2 at step 34 (21.8s), dist 0.132 m
+  reached wp3 at step 55 (34.6s), dist 0.158 m
+  reached wp4 at step 72 (44.8s), dist 0.150 m
+REACHED 4/4  |  final min-dist (m): [0.002, 0.025, 0.005, 0.0]
+[wp/square     ] 2240f (44.8s)  skate 0.0033  pen  8.90mm ( 99%)  jerk   750.9
+  [plot] /home/markson/projects/canvas/rl_standalone/out/waypoint_square.png
+  [video] /home/markson/projects/canvas/rl_standalone/out/waypoint_square.mp4
+/home/markson/projects/canvas/rl_standalone/models.py:94: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.enc = nn.TransformerEncoder(
+shape=star  5 wp  fwd_max=0.100  turn_max=0.530
+  reached wp1 at step 17 (11.5s), dist 0.150 m
+  reached wp2 at step 56 (35.8s), dist 0.147 m
+REACHED 2/5  |  final min-dist (m): [0.002, 0.0, 0.441, 0.066, 0.4]
+[wp/star       ] 3776f (75.5s)  skate 0.0028  pen 12.50mm ( 99%)  jerk   794.0
+  [plot] /home/markson/projects/canvas/rl_standalone/out/waypoint_star.png
+  [video] /home/markson/projects/canvas/rl_standalone/out/waypoint_star.mp4
