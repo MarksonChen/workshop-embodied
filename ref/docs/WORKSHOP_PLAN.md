@@ -197,7 +197,14 @@ u_t\text{ acts over }[t,t+1)\text{ and produces }x_{t+1}.
 The accepted release contains 1,784/278/342 train/validation/test clips and
 151,452 transitions. It passes 99.09% of candidate clips and builds in 84.4
 seconds. These ten-dimensional controls are Fetch pseudo-labels with requested
-axis torque `-300u`; they are not biological torque.
+axis torque `-300u` before joint-limit gating. The learned action is normalized
+control `u in [-1,1]^10`; the requested-torque field is neither measured animal
+torque nor a guarantee of the torque ultimately applied by the simulator.
+
+Keep the one-frame causal anchor visible. Demo F's state prediction at token
+anchor `a` uses command frames `4a`→`4a+31`; Demo H chooses control
+`u[4a-1]` before `x[4a]`, so it uses `4a-1`→`4a+30`. The first intervals are
+16→47 and 15→46. Both span 0.62 seconds.
 
 ### 7.2 Pretrain motion first, then control
 
@@ -222,6 +229,11 @@ of windows, and improves 20-step closed-loop control MSE by 86.9% over
 repeating the initial control. The frozen prior itself locomotes from an
 ordinary standing reset for five seconds without falling or saturating.
 
+Show the two calibrated scores by name: `state_log_prob` is Gaussian
+next-state-token likelihood per latent dimension, while
+`action_tanh_nll_per_dimension` includes the tanh Jacobian for bounded
+controls. `train_prior` always starts from random initialization.
+
 ### 7.3 Freeze the reference and apply RL post-training
 
 Freeze the planner and base action distribution. Initialize a small residual
@@ -241,6 +253,17 @@ uses PPO entropy with the matching coefficient; together they are exactly the
 mean per-action-dimension KL term. No hand-written gait or naturalness metric
 is optimized.
 
+Keep the live comparison simple:
+
+- use Demo A as the scratch task-only PPO baseline;
+- use H1 for the same frozen prior and bounded residual adapter with `beta=0`;
+- use H2 for that same prior and adapter with reference KL.
+
+The old H0 path had a different observation/policy contract and is removed.
+One frozen 1,094-D layout—101 physical values, 16×60 body-feature values, ten
+previous-control values, four phases, 16 plan values, and three command
+values—is shared by environment, policy, evaluator, and checkpoint loader.
+
 Freeze:
 
 - `beta=0.10`;
@@ -256,7 +279,7 @@ seconds; including the one-time physical projection takes about 250 seconds.
 The user selected β=0.10 after one video placed it beside a matched β=0.075
 run at six speeds. Preserve the complete record:
 
-| command | realized β=.10 | survival | strict four-limb stride gate |
+| command (Fetch units/s) | realized β=.10 (Fetch units/s) | survival | strict four-limb stride gate |
 |---:|---:|---:|---:|
 | 1.5 | 1.471 | 100% | pass |
 | 2.0 | 2.010 | 100% | pass |
@@ -273,8 +296,9 @@ solution.
 
 Acceptance therefore means **workshop-ready qualitative demonstration**, not
 that every predeclared research gate passed. Always show the 2.5 and 4.0
-failures. Require multiple policy-training seeds and matched H0/H1 baselines
-before claiming algorithm-level superiority.
+failures. There is not yet an accepted matched high-speed H1 report. Require
+multiple H1/H2 policy-training seeds and a carefully matched Demo A scratch
+baseline before claiming algorithm-level superiority.
 
 ## 9. Live run of show
 
@@ -292,6 +316,13 @@ before claiming algorithm-level superiority.
 12. Train or replay the accepted 95-second β=0.10 run.
 13. Show all six speeds in one video with validation labels visible.
 14. Ask students to identify every data target, pseudo-label, and reward.
+
+Use `demo_f.api` and `demo_h.api` for notebook data/prior calls. Run projection,
+physics evaluation, PPO, `python -m demo_h.visualize`, and
+`python -m demo_h.render_speed_comparison` in isolated subprocess cells pinned
+to Brax 0.12.3 and JAX/JAXlib 0.4.30. The workshop kernel has a different
+JAX/Brax/Torch stack; lazy API imports do not make the two binary environments
+interchangeable. A separate pinned kernel is the other supported option.
 
 The final sentence students should be able to say is:
 
@@ -350,6 +381,9 @@ Continue to follow `canvas/misc/autoresearch.md`:
 - keep naturalness diagnostics out of the training loss;
 - report raw task reward, reference KL, direct behavior, and runtime separately;
 - change one major block per experiment and keep append-only decisions;
+- bind each new H1/H2 checkpoint to its arm, frozen observation/action sizes,
+  and exact prior SHA-256; accept the legacy β=.10 checkpoint only with its
+  verified JSON sidecar;
 - require multiple policy seeds before making an algorithm-level claim;
 - retain negative results and failed validation cells after qualitative
   acceptance.

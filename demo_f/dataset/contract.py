@@ -82,6 +82,9 @@ DTYPES = {
 
 def validate_split_contract() -> None:
     groups = [set(sessions) for sessions in SPLIT_SESSIONS.values()]
-    assert tuple(map(len, groups)) == (26, 6, 6)
-    assert len(set.union(*groups)) == 38
-    assert not any(groups[i] & groups[j] for i in range(3) for j in range(i + 1, 3))
+    if tuple(map(len, groups)) != (26, 6, 6):
+        raise ValueError("frozen split sizes must be train=26, validation=6, test=6")
+    if len(set.union(*groups)) != 38:
+        raise ValueError("frozen splits must contain exactly 38 unique sessions")
+    if any(groups[i] & groups[j] for i in range(3) for j in range(i + 1, 3)):
+        raise ValueError("frozen session splits must be disjoint")

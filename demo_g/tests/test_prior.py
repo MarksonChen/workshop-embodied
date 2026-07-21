@@ -5,11 +5,11 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from demo_f.dataset import load_split
-from demo_f.dataset.contract import DYNAMIC_ROOT
-from demo_f.generate import load_prior as load_torch_prior
-from demo_f.generate import sha256
-from demo_g.prior import (
+from demo_f.dataset import load_split  # noqa: E402
+from demo_f.dataset.contract import DYNAMIC_ROOT  # noqa: E402
+from demo_f.artifacts import sha256  # noqa: E402
+from demo_f.prior import load_prior as load_torch_prior  # noqa: E402
+from demo_g.prior import (  # noqa: E402
     DEFAULT_PRIOR,
     PLANAR_UNSUPPORTED_FEATURES,
     load_prior as load_jax_prior,
@@ -26,7 +26,10 @@ TORCH_CHECKPOINT = Path(__file__).resolve().parents[2] / "demo_f" / "out" / "pri
     reason="local frozen Demo F artifacts are not installed",
 )
 def test_jax_export_matches_frozen_pytorch_prior():
-    checkpoint, _, tokenizer, predictor = load_torch_prior(TORCH_CHECKPOINT)
+    torch_prior = load_torch_prior(TORCH_CHECKPOINT)
+    checkpoint = torch_prior.checkpoint
+    tokenizer = torch_prior.tokenizer
+    predictor = torch_prior.predictor
     prior = load_jax_prior(DEFAULT_PRIOR)
     assert prior.metadata["source_checkpoint_sha256"] == sha256(TORCH_CHECKPOINT)
 

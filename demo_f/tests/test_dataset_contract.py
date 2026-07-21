@@ -2,9 +2,11 @@ import inspect
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 from demo_f.config import PriorConfig
+from demo_f.commands import hindsight_command
 from demo_f.dataset import hindsight_commands, loader
 from demo_f.dataset.contract import validate_split_contract
 from demo_f.features import FEATURE_DIM, trajectory_features
@@ -13,6 +15,11 @@ from demo_f.windows import predictor_windows
 
 def test_session_splits_are_disjoint():
     validate_split_contract()
+
+
+def test_demo_f_exposes_only_its_trained_one_token_head():
+    with pytest.raises(ValueError, match="one next-token"):
+        PriorConfig(future_tokens=2)
 
 
 def test_training_loader_has_no_raw_hdf5_dependency():
@@ -34,6 +41,7 @@ def test_fetch_feature_contract_is_60d():
     features = trajectory_features(root, quaternion, angles, feet, contacts)
     assert features.shape == (2, frames, FEATURE_DIM)
     assert np.isfinite(features).all()
+    np.testing.assert_allclose(features[:, 0, np.r_[0:2, 9:12, 22:32, 44:56]], 0.0)
 
 
 def test_hindsight_commands_use_each_requested_anchor():
@@ -44,6 +52,16 @@ def test_hindsight_commands_use_each_requested_anchor():
     command = hindsight_commands(root, quaternion, np.asarray([1, 3]), 3)
     np.testing.assert_allclose(command[0, :, 0], 0.3, atol=1e-6)
     np.testing.assert_allclose(command[0, :, 1:], 0.0, atol=1e-6)
+
+
+def test_hindsight_turn_unwraps_across_pi():
+    yaw = np.asarray((3.10, -3.00), np.float32)
+    quaternion = np.zeros((1, 2, 4), np.float32)
+    quaternion[0, :, 0] = np.cos(yaw / 2)
+    quaternion[0, :, 3] = np.sin(yaw / 2)
+    root = np.zeros((1, 2, 3), np.float32)
+    command = hindsight_command(root, quaternion, start=0, future=1)
+    np.testing.assert_allclose(command[0, 2], 2 * np.pi - 6.10, atol=1e-6)
 
 
 def test_predictor_windows_align_next_tokens_and_hindsight_commands():

@@ -1,9 +1,10 @@
 # Demo F — rodent-derived conditional motion on Fetch
 
 Demo F repeats Demo B's self-supervised construction after retargeting real
-Coltrane locomotion to the ten-joint Fetch body used by Demo A. Its output is a
-frozen conditional motion model for Demo G; it is not a controller and never
-interacts with physics during training.
+Coltrane locomotion to the ten-joint Fetch body used by Demo A. Its accepted
+checkpoint is the frozen conditional motion model used by Demo G; Demo H also
+reuses its retargeting, feature, command, model, and metric primitives. Demo F
+is not a controller and never interacts with physics during training.
 
 Given a past motion window `h`, Demo F extracts a future displacement command
 `c` from the same recording and predicts the shifted future `w`:
@@ -60,6 +61,10 @@ uv run --extra workshop python -m demo_f.dataset.validate \
   --root demo_f/dataset/release_dynamic
 ```
 
+Retiming refuses to replace an existing manifest unless `--overwrite` is
+passed explicitly; experimental parameters also require a distinct output
+root. Source-overlapping, broad, and existing non-release targets are rejected.
+
 Demo H uses a separate, empirically selected timing variant rather than
 changing this canonical Demo F release. Build its one-crop `1.75x` derivative
 with:
@@ -100,10 +105,29 @@ and decoded joint-limit excursions receive weight 10. This closes the mismatch
 between safe one-step prediction and drifting autoregressive generation without
 making the workshop architecture larger.
 
+Feature contract v1 forward-fills the otherwise undefined frame-zero rates
+from the clip's first transition. This historical convention is explicit and
+versioned because both accepted Demo F and Demo H artifacts were trained on it.
+
 The fixed-variance Gaussian score is the average latent log likelihood. With
 fixed `sigma`, ranking motion by this score is equivalent to ranking its
 normalized prediction error, while retaining a calibrated scalar that Demo G
 can use as a frozen reward term.
+
+## One causal command convention
+
+The shared command helper always measures an egocentric displacement over an
+explicit pair of frames. The one-frame difference between Demos F and H is
+intentional:
+
+- Demo F predicts a state token beginning at frame `4a`, so its command runs
+  from frame `4a` through frame `4a+31`.
+- Demo H predicts control `u[4a-1]`, which produces state `x[4a]`, so its
+  command runs from frame `4a-1` through frame `4a+30`.
+
+For the first predictor anchor `a=4`, those are frames 16→47 in Demo F and
+15→46 in Demo H. Both use a 31-frame, 0.62-second horizon; moving Demo H's
+anchor forward would leak across the action/state boundary.
 
 ## Accepted evidence
 
@@ -114,9 +138,9 @@ Seed 0 trains in 51.4 seconds on the current GPU. It uses 37,415 training and
 | held-out measure | validation | final test |
 |---|---:|---:|
 | rollout objective | 0.0536 | 0.0862 |
-| speed tracking MAE | 0.0080 m/s | 0.0129 m/s |
-| skill over last-token persistence | 21.5% | 21.5% |
-| matching command beats reversed | 82.7% | 82.7% |
+| source-equivalent speed MAE | 0.0080 m/s | 0.0129 m/s |
+| skill over last-token persistence | 21.5% | 24.0% |
+| matching command beats reversed | 82.7% | 83.7% |
 | real minus shuffled-future log likelihood | +5.81 | +5.56 |
 | actual-speed bins selecting matching command | 5/5 | 5/5 |
 | local likelihood peak at exact match | yes | yes |
@@ -170,20 +194,49 @@ masks precisely these unsupported channels before scoring. Describe this as a
 planar, rodent-derived motion prior—not literal rat biomechanics or a model of
 full 3-D Fetch dynamics.
 
-## Layout
+## Notebook-facing surface
+
+Use the small public API in notebook cells rather than reaching into training
+scripts:
+
+```python
+from demo_f.api import (
+    evaluate_checkpoint,
+    generate_rollouts,
+    load_manifest,
+    load_prior,
+    load_split,
+)
+```
+
+The reusable implementation is deliberately centralized: `commands.py` owns
+hindsight commands, `features.py` and `jax_features.py` own the offline/online
+60-D contract, `models.py` and `jax_models.py` own the Torch/JAX model math,
+and `metrics.py`, `losses.py`, `prior.py`, and `artifacts.py` contain shared
+diagnostics, losses, inference, and hashing. Demo H imports these modules
+instead of maintaining parallel copies.
+
+## Package map
 
 ```text
-config.py              retarget and accepted prior settings
-retarget.py            semantic preprocessing and sequence IK
-features.py            shared 60-D offline/online feature contract
-dataset/build.py       raw Aldarondo data -> public kinematic release
-dataset/retime.py      configurable temporal dilation; Froude by default
-dataset/validate.py    fail-closed schema, checksum, and geometry audit
-train.py               conditional Gaussian-prior training
-evaluate.py            held-out rollout and likelihood gates
-generate.py            receding-horizon conditional generation and traces
-export_jax.py           provenance-carrying frozen scorer for Demo G
-experiment/            append-only experiment decisions
+api.py                        stable notebook imports
+artifacts.py                  shared streaming SHA-256 helper
+commands.py                   shared egocentric hindsight commands
+config.py                     retarget and accepted prior settings
+features.py / jax_features.py shared 60-D offline/online feature contract
+models.py / jax_models.py     Torch training and pure-JAX inference math
+losses.py / metrics.py        shared losses and validation-only gait metrics
+prior.py                      loaded prior, scoring, and rollout API
+api.py                        stable notebook-facing imports
+windows.py                    causal Demo F predictor alignment
+retarget.py                   semantic preprocessing and sequence IK
+dataset/build.py              raw Aldarondo data -> public kinematic release
+dataset/retime.py             configurable temporal dilation; Froude by default
+dataset/validate.py           fail-closed schema, checksum, and geometry audit
+train.py / evaluate.py        fitting and held-out likelihood gates
+generate.py / render.py       generated traces and exact-body visualization
+export_jax.py                 provenance-carrying frozen scorer for Demo G
+experiment/                   append-only experiment decisions
 ```
 
 See [`ref/docs/demo_f.md`](../ref/docs/demo_f.md) for the workshop-facing role

@@ -11,6 +11,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from demo_f.config import (
+    FEATURE_CONTRACT_VERSION,
+    LEGACY_FEATURE_CONTRACT_VERSION,
+)
+from demo_f.jax_models import causal_conv, layer_norm, linear, sinusoidal_positions
 
 DEFAULT_PRIOR = Path(__file__).resolve().parents[1] / "demo_f" / "out" / "prior_jax.npz"
 # Retargeted root orientation is deliberately yaw-only.  These channels encode
@@ -18,39 +23,6 @@ DEFAULT_PRIOR = Path(__file__).resolve().parents[1] / "demo_f" / "out" / "prior_
 # velocity; their training variance is numerical zero, so physical body rocking
 # must not dominate the motor-likelihood score.
 PLANAR_UNSUPPORTED_FEATURES = (7, 8, 9, 10)
-
-
-def linear(values, weight, bias):
-    return values @ weight.T + bias
-
-
-def layer_norm(values, weight, bias, epsilon=1e-5):
-    mean = values.mean(axis=-1, keepdims=True)
-    variance = jnp.square(values - mean).mean(axis=-1, keepdims=True)
-    return (values - mean) * jax.lax.rsqrt(variance + epsilon) * weight + bias
-
-
-def causal_conv(values, weight, bias, stride):
-    kernel = weight.shape[-1]
-    padded = jnp.pad(values, ((kernel - stride, 0), (0, 0)))
-    output = jax.lax.conv_general_dilated(
-        padded[None],
-        weight.transpose(2, 1, 0),
-        window_strides=(stride,),
-        padding="VALID",
-        dimension_numbers=("NWC", "WIO", "NWC"),
-    )[0]
-    return output + bias
-
-
-def sinusoidal_positions(length, width, dtype):
-    position = jnp.arange(length, dtype=dtype)[:, None]
-    frequency = jnp.exp(
-        jnp.arange(0, width, 2, dtype=dtype) * (-math.log(10_000.0) / width)
-    )
-    output = jnp.zeros((length, width), dtype=dtype)
-    output = output.at[:, 0::2].set(jnp.sin(position * frequency))
-    return output.at[:, 1::2].set(jnp.cos(position * frequency))
 
 
 @dataclass(frozen=True)
@@ -213,6 +185,14 @@ def load_prior(path: Path = DEFAULT_PRIOR) -> DemoFPrior:
         metadata = json.loads(str(archive["metadata_json"]))
         if metadata.get("schema") != "demo-f-jax-prior-v1":
             raise ValueError(f"unsupported JAX prior schema {metadata.get('schema')!r}")
+        feature_contract = metadata.get(
+            "feature_contract_version", LEGACY_FEATURE_CONTRACT_VERSION
+        )
+        if feature_contract != FEATURE_CONTRACT_VERSION:
+            raise ValueError(
+                f"prior feature contract {feature_contract!r}; "
+                f"expected {FEATURE_CONTRACT_VERSION!r}"
+            )
         tokenizer = {
             name.removeprefix("tokenizer::"): jnp.asarray(archive[name])
             for name in archive.files

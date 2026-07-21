@@ -23,7 +23,7 @@ from brax.v1 import math
 from brax.v1.envs import fetch
 from brax.v1.io import html, image
 
-from .config import INSPECTION_CLIPS
+from .config import FPS, INSPECTION_CLIPS
 
 
 ROOT = Path(__file__).resolve().parent
@@ -88,7 +88,7 @@ def render_one(path: Path, size: int) -> tuple[Path, list[np.ndarray]]:
     frames = []
     for frame_index, qp in enumerate(qps):
         frame = np.asarray(image.render_array(env.sys, qp, size, size, ssaa=1))
-        frames.append(_overlay(frame, f"{label}  |  t={frame_index / 50:.2f}s"))
+        frames.append(_overlay(frame, f"{label}  |  t={frame_index / FPS:.2f}s"))
     output = path.with_name(f"{path.stem}_fetch.mp4")
     imageio.mimwrite(output, frames, fps=int(trajectory["fps"]), quality=8)
     html_path = path.with_name(f"{path.stem}_fetch.html")
@@ -110,6 +110,10 @@ def main():
         paths = [args.input_dir / f"{spec.label}.npz" for spec in INSPECTION_CLIPS]
     if not paths:
         raise SystemExit(f"no {args.mode} trajectory artifacts in {args.input_dir}")
+    if len(paths) != 4:
+        raise SystemExit(
+            f"the synchronized workshop grid requires 4 trajectories, found {len(paths)}"
+        )
     missing = [path for path in paths if not path.exists()]
     if missing:
         raise SystemExit(
@@ -127,7 +131,7 @@ def main():
         grid_frames.append(np.concatenate((top, bottom), axis=0))
     grid_name = "speed_grid_demo_f.mp4" if args.mode == "generated" else "speed_grid_fetch.mp4"
     grid_path = args.input_dir / grid_name
-    imageio.mimwrite(grid_path, grid_frames, fps=50, quality=8)
+    imageio.mimwrite(grid_path, grid_frames, fps=FPS, quality=8)
     print(f"wrote {grid_path}", flush=True)
 
 

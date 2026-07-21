@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import functools
-import hashlib
 import json
 import pickle
 import subprocess
@@ -26,6 +25,7 @@ from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 
 from demo_a.train_fetch import FetchV2
+from demo_f.artifacts import sha256
 
 from .config import (
     DEFAULT_BETA,
@@ -42,14 +42,6 @@ from .wrappers import wrap_demo_g_for_training
 
 
 OUT = Path(__file__).resolve().parent / "out"
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def git_provenance() -> dict:

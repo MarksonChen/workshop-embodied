@@ -8,8 +8,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .contract import DEFAULT_ROOT, REPOSITORY_ID, SCHEMA_VERSION
+from ..config import (
+    FEATURE_CONTRACT_VERSION,
+    LEGACY_FEATURE_CONTRACT_VERSION,
+)
 from ..features import trajectory_features
+from .contract import DEFAULT_ROOT, REPOSITORY_ID, SCHEMA_VERSION
 
 
 @dataclass
@@ -23,37 +27,6 @@ class FetchMotionSet:
     source_speed_mps: np.ndarray
     source_path_speed_mps: np.ndarray
     sessions: tuple[str, ...]
-
-
-def hindsight_commands(
-    root_position: np.ndarray,
-    root_quaternion: np.ndarray,
-    start_frames: np.ndarray,
-    horizon_frames: int,
-) -> np.ndarray:
-    """Construct egocentric displacement commands at several causal anchors."""
-
-    root_position = np.asarray(root_position, np.float32)
-    quaternion = np.asarray(root_quaternion, np.float32)
-    start = np.asarray(start_frames, np.int64)
-    future = start + int(horizon_frames)
-    if start.ndim != 1 or start.min() < 0 or future.max() >= root_position.shape[1]:
-        raise ValueError("command windows exceed the stored trajectory")
-    w, x, y, z = np.moveaxis(quaternion, -1, 0)
-    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-    origin = root_position[:, start, :2]
-    delta = root_position[:, future, :2] - origin
-    heading = yaw[:, start]
-    cosine, sine = np.cos(-heading), np.sin(-heading)
-    turn = (yaw[:, future] - heading + np.pi) % (2 * np.pi) - np.pi
-    return np.stack(
-        (
-            cosine * delta[..., 0] - sine * delta[..., 1],
-            sine * delta[..., 0] + cosine * delta[..., 1],
-            turn,
-        ),
-        axis=-1,
-    ).astype(np.float32)
 
 
 def download_dataset(root: Path = DEFAULT_ROOT) -> Path:
@@ -82,6 +55,14 @@ def load_manifest(root: Path = DEFAULT_ROOT, *, download: bool = False) -> dict:
         )
     if not manifest.get("complete_release", False):
         raise ValueError("Demo F canonical training requires a complete 38-session release")
+    feature_contract = manifest.get(
+        "feature_contract_version", LEGACY_FEATURE_CONTRACT_VERSION
+    )
+    if feature_contract != FEATURE_CONTRACT_VERSION:
+        raise ValueError(
+            f"dataset feature contract {feature_contract!r}; "
+            f"expected {FEATURE_CONTRACT_VERSION!r}"
+        )
     return manifest
 
 

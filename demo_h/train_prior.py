@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import random
 import time
@@ -15,26 +14,19 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from demo_f.artifacts import sha256
+from demo_f.config import FEATURE_CONTRACT_VERSION
 from demo_f.models import ConditionalTransformer, MotionAutoencoder
-from demo_f.train import joint_limit_loss
+from demo_f.losses import joint_limit_loss
 from demo_f.windows import encode_in_batches
-from demo_h.config import OUT, PriorConfig
+from demo_h.config import ACTION_PHASES, OUT, PriorConfig
 from demo_h.dataset.contract import DEFAULT_ROOT
 from demo_h.dataset.loader import load_manifest, load_split
-from demo_h.models import FeedbackActionDecoder, pre_tanh
-from demo_h.windows import ACTION_PHASES, StateActionWindows, state_action_windows
+from demo_h.models import FeedbackActionDecoder, pre_tanh, tanh_gaussian_nll
+from demo_h.windows import StateActionWindows, state_action_windows
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DEFAULT_DEMO_F = Path(__file__).resolve().parents[1] / "demo_f" / "out" / "prior.pt"
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def seed_everything(seed: int) -> None:
@@ -87,7 +79,7 @@ def _action_metrics(
     command_std,
     batch_size=4096,
 ):
-    sums = {name: 0.0 for name in ("squared", "nll", "shuffled_squared")}
+    sums = {name: 0.0 for name in ("squared", "tanh_nll", "shuffled_squared")}
     count = 0
     # Flattening is clip-major, then anchor, then action phase. Shift by one
     # complete clip so the negative retains phase/anchor but changes behavior.
@@ -107,15 +99,12 @@ def _action_metrics(
                 command,
             )
             target = windows.target_control[offset:stop]
-            target_y = pre_tanh(target)
             mean, log_std = decoder.distribution(*args)
             prediction = torch.tanh(mean)
             sums["squared"] += F.mse_loss(prediction, target, reduction="sum").item()
-            residual = (target_y - mean) / log_std.exp()
-            sums["nll"] += (
-                0.5
-                * (residual.square() + 2 * log_std + np.log(2 * np.pi)).sum().item()
-            )
+            sums["tanh_nll"] += tanh_gaussian_nll(
+                mean, log_std, target
+            ).sum().item()
             shuffled_mean = decoder(
                 windows.current_feature[offset:stop],
                 predicted_plan[permutation[offset:stop]],
@@ -134,7 +123,7 @@ def _action_metrics(
     mean_mse = F.mse_loss(mean_control.expand_as(target), target).item()
     return {
         "mse": sums["squared"] / count,
-        "nll_per_dimension": sums["nll"] / count,
+        "tanh_nll_per_dimension": sums["tanh_nll"] / count,
         "shuffled_plan_mse": sums["shuffled_squared"] / count,
         "previous_control_mse": previous_mse,
         "zero_control_mse": zero_mse,
@@ -222,8 +211,6 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=OUT / "prior_retime_1p75.pt"
     )
-    parser.add_argument("--demo-f-checkpoint", type=Path, default=DEFAULT_DEMO_F)
-    parser.add_argument("--from-scratch", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tokenizer-steps", type=int, default=PriorConfig.tokenizer_steps)
     parser.add_argument("--predictor-steps", type=int, default=PriorConfig.predictor_steps)
@@ -252,8 +239,8 @@ def main() -> None:
     validation_features = torch.from_numpy(
         (validation.features - feature_mean_np) / std
     ).to(DEVICE)
-    train_controls = torch.from_numpy(train.controls).to(DEVICE)
-    validation_controls = torch.from_numpy(validation.controls).to(DEVICE)
+    train_controls = torch.from_numpy(train.normalized_control).to(DEVICE)
+    validation_controls = torch.from_numpy(validation.normalized_control).to(DEVICE)
     feature_mean = torch.from_numpy(feature_mean_np).to(DEVICE)
     feature_std = torch.from_numpy(std).to(DEVICE)
     generator = torch.Generator(device=DEVICE).manual_seed(args.seed)
@@ -266,14 +253,6 @@ def main() -> None:
         layers=config.transformer_layers,
         heads=config.transformer_heads,
     ).to(DEVICE)
-    source_hash = None
-    if not args.from_scratch:
-        source = torch.load(args.demo_f_checkpoint, map_location=DEVICE, weights_only=False)
-        tokenizer.load_state_dict(source["tokenizer"])
-        predictor.load_state_dict(source["predictor"])
-        source_hash = sha256(args.demo_f_checkpoint)
-        print(f"initialized Demo F weights from {args.demo_f_checkpoint}", flush=True)
-
     started = time.perf_counter()
     optimizer = torch.optim.AdamW(tokenizer.parameters(), lr=config.learning_rate)
     tokenizer.train()
@@ -561,13 +540,11 @@ def main() -> None:
     }
     checkpoint = {
         "schema": "demo-h-prior-v1",
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "config": asdict(config),
         "seed": args.seed,
         "dataset_manifest_sha256": sha256(args.dataset_root / "manifest.json"),
         "dataset_variant": manifest["variant"],
-        "demo_f_initialization": None
-        if args.from_scratch
-        else {"path": str(args.demo_f_checkpoint), "sha256": source_hash},
         "feature_mean": feature_mean_np,
         "feature_std": std,
         "token_mean": token_mean.cpu().numpy(),

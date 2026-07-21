@@ -12,16 +12,23 @@ import jax.numpy as jnp
 import numpy as np
 from brax.v1.envs import fetch
 
+from demo_f.commands import hindsight_command
+from demo_f.jax_features import contact_flags, transition_feature
 from demo_f.kinematics import fetch_feet
-from demo_g.features import transition_feature
-from demo_h.config import COMMAND_HORIZON_SECONDS, DT, OUT, TARGET_SPEED_FETCH
-from demo_h.dataset.commands import hindsight_command
+from demo_h.config import (
+    ACTION_DIM,
+    BUFFER_FRAMES,
+    COMMAND_HORIZON_FRAMES,
+    COMMAND_HORIZON_SECONDS,
+    DT,
+    FETCH_FOOT_NAMES,
+    HISTORY_TOKENS,
+    OUT,
+    PHASE_DIM,
+    TARGET_SPEED_FETCH,
+)
 from demo_h.dataset.contract import DEFAULT_ROOT
 from demo_h.prior import DEFAULT_PRIOR, load_prior
-
-
-FOOT_INDICES = (4, 6, 8, 10)
-BUFFER_FRAMES = 16
 
 
 def _feature(sys, previous_qp, qp, info):
@@ -29,9 +36,10 @@ def _feature(sys, previous_qp, qp, info):
     angles, _ = sys.joints[0].angle_vel(qp)
     previous_feet = fetch_feet(previous_angles)
     feet = fetch_feet(angles)
-    contacts = jnp.any(
-        jnp.abs(info.contact.vel[jnp.asarray(FOOT_INDICES)]) > 1e-7, axis=-1
+    foot_indices = jnp.asarray(
+        tuple(sys.body.index[name] for name in FETCH_FOOT_NAMES)
     )
+    contacts = contact_flags(info.contact.vel, foot_indices)
     return transition_feature(
         previous_qp.pos[0],
         qp.pos[0],
@@ -56,16 +64,16 @@ def make_rollout(sys, prior, steps: int):
 
             def refresh(_):
                 tokens = prior.encode(buffer)
-                return prior.predict_plan(tokens[-4:], command)
+                return prior.predict_plan(tokens[-HISTORY_TOKENS:], command)
 
             plan = jax.lax.cond(phase == 0, refresh, lambda _: plan, operand=None)
-            phase_vector = jax.nn.one_hot(phase, 4)
+            phase_vector = jax.nn.one_hot(phase, PHASE_DIM)
             mean = prior.action_mean(buffer[-1], plan, previous, phase_vector, command)
             control = jnp.tanh(mean)
             next_qp, info = sys.step(qp, control)
             feature, contacts = _feature(sys, qp, next_qp, info)
             buffer = jnp.roll(buffer, -1, axis=0).at[-1].set(feature)
-            next_phase = (phase + 1) % 4
+            next_phase = (phase + 1) % PHASE_DIM
             return (
                 next_qp,
                 buffer,
@@ -104,19 +112,25 @@ def _qp_from_archive(env, archive, index: int, frame: int):
 
 def in_support_reset(env, dataset_root: Path, command_target: np.ndarray):
     manifest = json.loads((dataset_root / "manifest.json").read_text())
+    frame = BUFFER_FRAMES - 1
     candidates = []
     for row in manifest["sessions"]:
         if row["split"] != "test" or not row["released_clips"]:
             continue
         path = dataset_root / row["shard"]
         with np.load(path) as archive:
-            distance = np.linalg.norm(archive["command"] - command_target, axis=1)
+            command = hindsight_command(
+                archive["realized_root_position"],
+                archive["realized_root_quaternion"],
+                start=frame,
+                future=frame + COMMAND_HORIZON_FRAMES,
+            )
+            distance = np.linalg.norm(command - command_target, axis=1)
             index = int(np.argmin(distance))
             candidates.append((float(distance[index]), row, path, index))
     _, row, path, index = min(candidates, key=lambda item: item[0])
     with np.load(path) as source:
         archive = {name: source[name] for name in source.files}
-    frame = 15
     qp = _qp_from_archive(env, archive, index, frame)
     buffer = jnp.asarray(archive["realized_features"][index, : frame + 1])
     previous = jnp.asarray(archive["normalized_control"][index, frame - 1])
@@ -124,13 +138,14 @@ def in_support_reset(env, dataset_root: Path, command_target: np.ndarray):
         archive["realized_root_position"][index : index + 1],
         archive["realized_root_quaternion"][index : index + 1],
         start=frame,
-        future=frame + 31,
+        future=frame + COMMAND_HORIZON_FRAMES,
     )[0]
     provenance = {
         "session": row["session"],
         "parent_clip_id": int(archive["parent_clip_id"][index]),
         "frame": frame,
         "command": command.tolist(),
+        "target_command_error": float(np.linalg.norm(command - command_target)),
     }
     return qp, buffer, previous, jnp.asarray(command), provenance
 
@@ -140,7 +155,10 @@ def standing_reset(env, command: np.ndarray):
     qp = state.qp
     angles, _ = env.sys.joints[0].angle_vel(qp)
     feet = fetch_feet(angles)
-    # The default standing pose has all four distal bodies on the plane.
+    foot_indices = jnp.asarray(
+        tuple(env.sys.body.index[name] for name in FETCH_FOOT_NAMES)
+    )
+    contacts = state.obs[-qp.pos.shape[0] :][foot_indices]
     feature = transition_feature(
         qp.pos[0],
         qp.pos[0],
@@ -150,12 +168,12 @@ def standing_reset(env, command: np.ndarray):
         angles,
         feet,
         feet,
-        jnp.ones(4),
+        contacts,
     )
     return (
         qp,
         jnp.repeat(feature[None], BUFFER_FRAMES, axis=0),
-        jnp.zeros(10),
+        jnp.zeros(ACTION_DIM),
         jnp.asarray(command),
         {"command": np.asarray(command).tolist()},
     )

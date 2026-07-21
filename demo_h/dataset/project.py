@@ -25,16 +25,22 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+import jaxlib
 import numpy as np
 from brax.v1 import math
 from brax.v1.envs import fetch
 
+from demo_f.artifacts import guard_derived_release_output, sha256
+from demo_f.commands import hindsight_command, yaw_from_quaternion
+from demo_f.config import FEATURE_CONTRACT_VERSION
 from demo_f.features import trajectory_features
+from demo_f.jax_features import contact_flags
 from demo_f.kinematics import fetch_feet
 from demo_h.config import (
     CLIP_FRAMES,
     DT,
     FPS,
+    FETCH_FOOT_NAMES,
     MAX_COMMAND_SPEED,
     MAX_CONTROL_SATURATION,
     MAX_JOINT_TRACKING_RMSE,
@@ -48,7 +54,6 @@ from demo_h.config import (
     TRANSITIONS,
 )
 
-from .commands import hindsight_command, yaw_from_quaternion
 from .contract import (
     DATASET_VARIANT,
     DEFAULT_ROOT,
@@ -58,22 +63,6 @@ from .contract import (
     PARENT_VARIANT,
     SCHEMA_VERSION,
 )
-
-
-FOOT_NAMES = (
-    "Front Right Lower",
-    "Front Left Lower",
-    "Back Right Lower",
-    "Back Left Lower",
-)
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _reference_rates(angles: np.ndarray, roots: np.ndarray, quaternions: np.ndarray):
@@ -97,7 +86,7 @@ class ExactFetchProjector:
         self.connected = jnp.arange(11)
         self.target_index = self.sys.body.index["Target"]
         self.foot_indices = jnp.asarray(
-            tuple(self.sys.body.index[name] for name in FOOT_NAMES)
+            tuple(self.sys.body.index[name] for name in FETCH_FOOT_NAMES)
         )
         self._rollout = jax.jit(self._rollout_impl)
 
@@ -169,9 +158,8 @@ class ExactFetchProjector:
             )
             next_qp, info = jax.vmap(self.sys.step)(qp, control)
             next_angle, _ = jax.vmap(self.sys.joints[0].angle_vel)(next_qp)
-            contact = jnp.any(
-                jnp.abs(info.contact.vel[:, self.foot_indices]) > 1e-7,
-                axis=-1,
+            contact = jax.vmap(contact_flags, in_axes=(0, None))(
+                info.contact.vel, self.foot_indices
             )
             return next_qp, (
                 next_qp.pos[:, 0],
@@ -224,6 +212,8 @@ class ExactFetchProjector:
         realized_angle = np.concatenate(
             (np.asarray(initial_angle[:count])[:, None], angle), axis=1
         ).astype(np.float32)
+        # Feature-contract v1 forward-fills frame zero from the first simulated
+        # transition, matching the accepted Demo F/H checkpoints.
         realized_contact = np.concatenate(
             (contact[:, :1], contact), axis=1
         ).astype(np.uint8)
@@ -314,6 +304,10 @@ class ExactFetchProjector:
         return {
             "brax_version": __import__("brax").__version__,
             "jax_version": jax.__version__,
+            "jaxlib_version": jaxlib.__version__,
+            "jax_backend": jax.default_backend(),
+            "jax_device_kinds": sorted({device.device_kind for device in jax.devices()}),
+            "jax_enable_x64": bool(jax.config.jax_enable_x64),
             "python_version": platform.python_version(),
             "fetch_config_sha256": hashlib.sha256(serialized).hexdigest(),
             "dt": float(self.sys.config.dt),
@@ -348,8 +342,25 @@ def project_release(
     max_clips_per_shard: int | None = None,
     parent_variant: str | None = PARENT_VARIANT,
     output_variant: str = DATASET_VARIANT,
+    overwrite: bool = False,
 ) -> dict:
     parent_root, output_root = Path(parent_root), Path(output_root)
+    complete_splits = set(splits) == {"train", "validation", "test"}
+    if output_root.resolve() == DEFAULT_ROOT.resolve() and (
+        not complete_splits
+        or max_clips_per_shard is not None
+        or output_variant != DATASET_VARIANT
+    ):
+        raise ValueError("partial or experimental projection requires a distinct output root")
+    parent_root, output_root = guard_derived_release_output(
+        parent_root,
+        output_root,
+        overwrite=overwrite,
+        expected_manifest={
+            "schema_version": SCHEMA_VERSION,
+            "variant": output_variant,
+        },
+    )
     parent_manifest_path = parent_root / "manifest.json"
     parent_manifest = json.loads(parent_manifest_path.read_text())
     actual_parent_variant = parent_manifest.get("variant")
@@ -421,10 +432,10 @@ def project_release(
     total = sum(row["candidate_clips"] for row in sessions)
     manifest = {
         "schema_version": SCHEMA_VERSION,
-        "complete_release": set(splits) == {"train", "validation", "test"}
-        and max_clips_per_shard is None,
+        "complete_release": complete_splits and max_clips_per_shard is None,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "variant": output_variant,
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "fps": FPS,
         "clip_frames": CLIP_FRAMES,
         "temporal_contract": "normalized_control[t] acts over [t,t+1) and produces realized state[t+1]",
@@ -445,6 +456,19 @@ def project_release(
             "position_gain": PD_POSITION_GAIN,
             "velocity_gain": PD_VELOCITY_GAIN,
             "requested_axis_torque_sign": -TORQUE_STRENGTH,
+            "code_sha256": {
+                "demo_f/commands.py": sha256(
+                    Path(__file__).resolve().parents[2] / "demo_f" / "commands.py"
+                ),
+                "demo_f/features.py": sha256(
+                    Path(__file__).resolve().parents[2] / "demo_f" / "features.py"
+                ),
+                "demo_f/jax_features.py": sha256(
+                    Path(__file__).resolve().parents[2] / "demo_f" / "jax_features.py"
+                ),
+                "demo_h/config.py": sha256(Path(__file__).resolve().parents[1] / "config.py"),
+                "demo_h/dataset/project.py": sha256(Path(__file__).resolve()),
+            },
         },
         "gates": {
             "minimum_torso_height": MIN_TORSO_HEIGHT,
@@ -472,7 +496,7 @@ def main() -> None:
         "--splits",
         nargs="+",
         choices=("train", "validation", "test"),
-        default=("train", "validation"),
+        default=("train", "validation", "test"),
     )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--max-clips-per-shard", type=int)
@@ -481,6 +505,7 @@ def main() -> None:
         "--output-variant",
         default=DATASET_VARIANT,
     )
+    parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     manifest = project_release(
         args.parent_root,
@@ -490,6 +515,7 @@ def main() -> None:
         max_clips_per_shard=args.max_clips_per_shard,
         parent_variant=args.parent_variant,
         output_variant=args.output_variant,
+        overwrite=args.overwrite,
     )
     print(json.dumps({key: manifest[key] for key in ("counts", "global_pass_rate", "build_seconds")}, indent=2))
 

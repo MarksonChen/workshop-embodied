@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import random
 import time
@@ -15,26 +14,18 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .config import JOINT_LIMIT, OUT, PriorConfig
+from .artifacts import sha256
+from .config import FEATURE_CONTRACT_VERSION, FEATURE_DIM, OUT, PriorConfig
 from .dataset import load_manifest, load_split
 from .dataset.contract import DYNAMIC_ROOT
-from .features import FEATURE_DIM
-from .features import SL
+from .losses import joint_limit_loss
 from .evaluate import rollout_report
-from .generate import dataset_command_calibration
+from .prior import dataset_command_calibration
 from .models import ConditionalTransformer, MotionAutoencoder
 from .windows import encode_in_batches, predictor_windows
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def seed_everything(seed: int) -> None:
@@ -48,29 +39,6 @@ def seed_everything(seed: int) -> None:
 def batches(values: torch.Tensor, size: int, generator: torch.Generator):
     index = torch.randint(len(values), (size,), device=values.device, generator=generator)
     return values[index]
-
-
-def joint_limit_loss(
-    normalized_features: torch.Tensor,
-    feature_mean: torch.Tensor,
-    feature_std: torch.Tensor,
-    *,
-    margin: float = 0.95,
-) -> torch.Tensor:
-    """Penalize decoded joint angles before they reach Fetch's hard limits.
-
-    The margin leaves a small buffer for autoregressive rollout error.  This is
-    a training loss only: evaluation still measures the unmodified generated
-    motion against the original +/-60 degree contract.
-    """
-
-    joint_slice = slice(*SL["joint_angles"])
-    angles = (
-        normalized_features[..., joint_slice] * feature_std[joint_slice]
-        + feature_mean[joint_slice]
-    )
-    excess = torch.relu(angles.abs() - margin * JOINT_LIMIT)
-    return excess.square().mean()
 
 
 @torch.inference_mode()
@@ -89,7 +57,6 @@ def main():
     parser.add_argument("--output", type=Path, default=OUT / "prior.pt")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--history-tokens", type=int, default=PriorConfig.history_tokens)
-    parser.add_argument("--future-tokens", type=int, default=PriorConfig.future_tokens)
     parser.add_argument("--latent-dim", type=int, default=PriorConfig.latent_dim)
     parser.add_argument("--learning-rate", type=float, default=PriorConfig.learning_rate)
     parser.add_argument(
@@ -108,7 +75,6 @@ def main():
     args = parser.parse_args()
     config = PriorConfig(
         history_tokens=args.history_tokens,
-        future_tokens=args.future_tokens,
         latent_dim=args.latent_dim,
         learning_rate=args.learning_rate,
         joint_limit_penalty=args.joint_limit_penalty,
@@ -317,6 +283,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     checkpoint = {
         "schema": "demo-f-prior-v2",
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "config": asdict(config),
         "seed": args.seed,
         "dataset_manifest_sha256": sha256(args.dataset_root / "manifest.json"),

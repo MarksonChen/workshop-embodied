@@ -8,21 +8,29 @@ from pathlib import Path
 
 import numpy as np
 
-from .contract import DEFAULT_ROOT, SCHEMA_VERSION
+from demo_f.config import (
+    FEATURE_CONTRACT_VERSION,
+    LEGACY_FEATURE_CONTRACT_VERSION,
+)
+
+from .contract import DATASET_VARIANT, DEFAULT_ROOT, DTYPES, FIELDS, SCHEMA_VERSION
 
 
 @dataclass
 class BodyActionSet:
     features: np.ndarray
-    controls: np.ndarray
+    normalized_control: np.ndarray
+    requested_actuator_torque: np.ndarray
+    valid_transition_mask: np.ndarray
     root_position: np.ndarray
     root_quaternion: np.ndarray
+    contacts: np.ndarray
     command: np.ndarray
     session_index: np.ndarray
     parent_clip_id: np.ndarray
     source_speed_mps: np.ndarray
+    source_path_speed_mps: np.ndarray
     sessions: tuple[str, ...]
-
 
 def load_manifest(root: Path = DEFAULT_ROOT) -> dict:
     path = Path(root) / "manifest.json"
@@ -37,6 +45,20 @@ def load_manifest(root: Path = DEFAULT_ROOT) -> dict:
         )
     if not manifest.get("complete_release", False):
         raise ValueError("prior training requires a complete Demo H release")
+    if manifest.get("variant") != DATASET_VARIANT:
+        raise ValueError(f"unexpected Demo H dataset variant {manifest.get('variant')!r}")
+    if manifest.get("fields") != {name: list(shape) for name, shape in FIELDS.items()}:
+        raise ValueError("Demo H manifest fields differ from the frozen contract")
+    if manifest.get("dtypes") != DTYPES:
+        raise ValueError("Demo H manifest dtypes differ from the frozen contract")
+    feature_contract = manifest.get(
+        "feature_contract_version", LEGACY_FEATURE_CONTRACT_VERSION
+    )
+    if feature_contract != FEATURE_CONTRACT_VERSION:
+        raise ValueError(
+            f"dataset feature contract {feature_contract!r}; "
+            f"expected {FEATURE_CONTRACT_VERSION!r}"
+        )
     return manifest
 
 
@@ -50,13 +72,17 @@ def load_split(split: str, root: Path = DEFAULT_ROOT) -> BodyActionSet:
         name: []
         for name in (
             "features",
-            "controls",
+            "normalized_control",
+            "requested_actuator_torque",
+            "valid_transition_mask",
             "root_position",
             "root_quaternion",
+            "contacts",
             "command",
             "session_index",
             "parent_clip_id",
             "source_speed_mps",
+            "source_path_speed_mps",
         )
     }
     sessions = []
@@ -64,13 +90,22 @@ def load_split(split: str, root: Path = DEFAULT_ROOT) -> BodyActionSet:
         with np.load(root / row["shard"]) as shard:
             count = len(shard["parent_clip_id"])
             values["features"].append(shard["realized_features"].astype(np.float32))
-            values["controls"].append(shard["normalized_control"].astype(np.float32))
+            values["normalized_control"].append(
+                shard["normalized_control"].astype(np.float32)
+            )
+            values["requested_actuator_torque"].append(
+                shard["requested_actuator_torque"].astype(np.float32)
+            )
+            values["valid_transition_mask"].append(
+                shard["valid_transition_mask"].astype(bool)
+            )
             values["root_position"].append(
                 shard["realized_root_position"].astype(np.float32)
             )
             values["root_quaternion"].append(
                 shard["realized_root_quaternion"].astype(np.float32)
             )
+            values["contacts"].append(shard["realized_contacts"].astype(bool))
             values["command"].append(shard["command"].astype(np.float32))
             values["session_index"].append(
                 np.full(count, session_index, dtype=np.int16)
@@ -78,6 +113,9 @@ def load_split(split: str, root: Path = DEFAULT_ROOT) -> BodyActionSet:
             values["parent_clip_id"].append(shard["parent_clip_id"].astype(np.int32))
             values["source_speed_mps"].append(
                 shard["source_speed_mps"].astype(np.float32)
+            )
+            values["source_path_speed_mps"].append(
+                shard["source_path_speed_mps"].astype(np.float32)
             )
             sessions.append(row["session"])
     return BodyActionSet(

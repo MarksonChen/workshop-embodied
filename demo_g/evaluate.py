@@ -13,7 +13,6 @@ an easier learned-model score.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import pickle
 import subprocess
@@ -26,6 +25,7 @@ import numpy as np
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 
+from demo_f.artifacts import sha256
 from demo_f.dataset import load_split
 from demo_f.dataset.contract import DYNAMIC_ROOT
 
@@ -36,14 +36,6 @@ from .prior import DEFAULT_PRIOR, load_prior
 
 OUT = Path(__file__).resolve().parent / "out"
 EVAL_SEEDS = (101, 211, 307, 401, 503)
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def reference_summary(dataset_root: Path) -> dict:

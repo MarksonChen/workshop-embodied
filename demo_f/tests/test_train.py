@@ -2,7 +2,7 @@ import torch
 
 from demo_f.config import JOINT_LIMIT
 from demo_f.features import FEATURE_DIM, SL
-from demo_f.train import joint_limit_loss
+from demo_f.losses import joint_limit_loss
 from demo_f.windows import predictor_windows
 
 

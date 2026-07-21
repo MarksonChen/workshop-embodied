@@ -37,13 +37,21 @@ tokenizer produces 16-D tokens. The Transformer reads four tokens, predicts one
 next token, and is trained through four of its own recursive predictions with a
 joint-limit loss.
 
+Keep one explicit command convention. For predictor anchor `a`, Demo F measures
+the egocentric 0.62-second command from frame `4a` to `4a+31`. Demo H starts at
+`4a-1` because control `u[4a-1]` produces the first predicted state `x[4a]`.
+Thus the first anchor is 16→47 in F and 15→46 in H; the one-frame shift is the
+causal action boundary, not an inconsistency.
+
 Training takes 51.4 seconds. The accepted seed-0 checkpoint passes every frozen
 gate on validation and final-test sessions:
 
 | measure | validation | test |
 |---|---:|---:|
 | rollout objective | 0.0536 | 0.0862 |
-| speed MAE | 0.0080 m/s | 0.0129 m/s |
+| source-equivalent speed MAE | 0.0080 m/s | 0.0129 m/s |
+| skill over last-token persistence | 21.5% | 24.0% |
+| matching command beats reversed | 82.7% | 83.7% |
 | real minus shuffled log likelihood | +5.81 | +5.56 |
 | matching likelihood bins | 5/5 | 5/5 |
 | local peak at matched command | yes | yes |
@@ -52,6 +60,11 @@ gate on validation and final-test sessions:
 The Gaussian likelihood is a normalized future-prediction score, not a complete
 physical-realism metric. Demo G therefore evaluates direct contacts, flight,
 foot slip, acceleration, joint speed, and cyclicity in addition to likelihood.
+
+For notebook code, import `load_split`, `load_prior`, `evaluate_checkpoint`,
+and `generate_rollouts` from `demo_f.api`. The shared implementation lives in
+`commands`, `features`/`jax_features`, `models`/`jax_models`, `metrics`,
+`losses`, `prior`, and `artifacts`; Demo H reuses these modules directly.
 
 ## Live commands
 

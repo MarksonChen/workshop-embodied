@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
-import jax.numpy as jnp
 import numpy as np
 
-from ..config import JOINT_LIMIT
+from ..config import (
+    FEATURE_CONTRACT_VERSION,
+    JOINT_LIMIT,
+    LEGACY_FEATURE_CONTRACT_VERSION,
+)
+from ..artifacts import sha256
 from .contract import (
     DEFAULT_ROOT,
     DTYPES,
@@ -19,22 +22,14 @@ from .contract import (
     SPLIT_SESSIONS,
     validate_split_contract,
 )
-from ..kinematics import fetch_feet
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+from ..kinematics import fetch_feet_numpy
 
 
 def validate_release(
     root: Path,
     *,
     hashes: bool = True,
-    require_complete: bool = False,
+    require_complete: bool = True,
 ) -> dict:
     root = root.resolve()
     manifest_path = root / "manifest.json"
@@ -44,6 +39,14 @@ def validate_release(
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             f"schema {manifest.get('schema_version')!r} != supported {SCHEMA_VERSION!r}"
+        )
+    feature_contract = manifest.get(
+        "feature_contract_version", LEGACY_FEATURE_CONTRACT_VERSION
+    )
+    if feature_contract != FEATURE_CONTRACT_VERSION:
+        raise ValueError(
+            f"feature contract {feature_contract!r} != "
+            f"supported {FEATURE_CONTRACT_VERSION!r}"
         )
     if require_complete and not manifest.get("complete_release", False):
         raise ValueError("partial release cannot be published or used for canonical training")
@@ -95,7 +98,7 @@ def validate_release(
             raise ValueError(f"{path}: retained clip exceeds saturation gate")
         if arrays["source_path_speed_mps"].min() <= manifest["selection"]["minimum_speed_mps"]:
             raise ValueError(f"{path}: retained clip fails locomotion speed screen")
-        recomputed_feet = np.asarray(fetch_feet(jnp.asarray(arrays["joint_angles"])))
+        recomputed_feet = fetch_feet_numpy(arrays["joint_angles"])
         np.testing.assert_allclose(recomputed_feet, arrays["feet_local"], atol=2e-5)
         if count != row["released_clips"]:
             raise ValueError(f"{path}: manifest count mismatch")
@@ -132,8 +135,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--skip-hashes", action="store_true")
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="accept an explicitly incomplete development release",
+    )
     args = parser.parse_args()
-    report = validate_release(args.root, hashes=not args.skip_hashes)
+    report = validate_release(
+        args.root,
+        hashes=not args.skip_hashes,
+        require_complete=not args.allow_partial,
+    )
     print(json.dumps(report, indent=2))
 
 

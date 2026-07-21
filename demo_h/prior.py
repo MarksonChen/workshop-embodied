@@ -11,8 +11,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from demo_g.prior import causal_conv, layer_norm, linear, sinusoidal_positions
-from demo_h.config import PRIOR_CONTROL_LIMIT
+from demo_f.artifacts import sha256
+from demo_f.config import (
+    FEATURE_CONTRACT_VERSION,
+    LEGACY_FEATURE_CONTRACT_VERSION,
+)
+from demo_f.jax_models import causal_conv, layer_norm, linear, sinusoidal_positions
+from demo_h.config import PRIOR_CONTROL_LIMIT, PriorConfig
 
 
 DEFAULT_PRIOR = (
@@ -33,6 +38,7 @@ class DemoHPrior:
     command_std: jax.Array
     state_sigma: jax.Array
     metadata: dict
+    artifact_sha256: str
 
     @property
     def heads(self) -> int:
@@ -153,6 +159,16 @@ class DemoHPrior:
             self.predictor["output.2.bias"],
         )
 
+    def state_log_prob(self, history, realized_plan, raw_command):
+        """Gaussian next-state-token log likelihood per latent dimension."""
+
+        residual = (realized_plan - self.predict_plan(history, raw_command)) / self.state_sigma
+        return -0.5 * (
+            jnp.square(residual)
+            + 2.0 * jnp.log(self.state_sigma)
+            + math.log(2.0 * math.pi)
+        ).mean(axis=-1)
+
     def action_mean(
         self,
         raw_feature,
@@ -191,14 +207,6 @@ class DemoHPrior:
         previous_mean = jnp.arctanh(previous_control)
         return previous_mean + correction
 
-    def infer(self, feature_buffer, previous_control, phase, raw_command):
-        history = self.encode(feature_buffer)
-        plan = self.predict_plan(history[-4:], raw_command)
-        mean = self.action_mean(
-            feature_buffer[-1], plan, previous_control, phase, raw_command
-        )
-        return mean, self.action_log_std, plan
-
 
 def load_prior(path: Path = DEFAULT_PRIOR) -> DemoHPrior:
     path = Path(path)
@@ -210,6 +218,15 @@ def load_prior(path: Path = DEFAULT_PRIOR) -> DemoHPrior:
         metadata = json.loads(str(archive["metadata_json"]))
         if metadata.get("schema") != "demo-h-jax-prior-v1":
             raise ValueError(f"unsupported schema {metadata.get('schema')!r}")
+        feature_contract = metadata.get(
+            "feature_contract_version", LEGACY_FEATURE_CONTRACT_VERSION
+        )
+        if feature_contract != FEATURE_CONTRACT_VERSION:
+            raise ValueError(
+                f"prior feature contract {feature_contract!r}; "
+                f"expected {FEATURE_CONTRACT_VERSION!r}"
+            )
+        PriorConfig(**metadata["config"]).validate_online_contract()
         groups = {}
         for group in ("tokenizer", "predictor", "action_decoder"):
             groups[group] = {
@@ -229,4 +246,9 @@ def load_prior(path: Path = DEFAULT_PRIOR) -> DemoHPrior:
                 "state_sigma",
             )
         }
-    return DemoHPrior(metadata=metadata, **groups, **constants)
+    return DemoHPrior(
+        metadata=metadata,
+        artifact_sha256=sha256(path),
+        **groups,
+        **constants,
+    )

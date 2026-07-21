@@ -17,16 +17,21 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .config import OUT
+from .config import FEATURE_CONTRACT_VERSION, OUT
 from .dataset import load_split
 from .dataset.contract import DYNAMIC_ROOT
-from .generate import checkpoint_command_scale, load_prior, sha256
+from .artifacts import sha256
+from .prior import checkpoint_command_scale, load_prior
 from .windows import encode_in_batches, predictor_windows
 
 
 @torch.inference_mode()
 def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dict:
-    checkpoint, config, tokenizer, predictor = load_prior(checkpoint_path)
+    prior = load_prior(checkpoint_path)
+    checkpoint = prior.checkpoint
+    config = prior.config
+    tokenizer = prior.tokenizer
+    predictor = prior.predictor
     if checkpoint.get("schema") != "demo-f-prior-v2":
         raise ValueError("Demo G requires the aligned next-token Demo F v2 prior")
 
@@ -58,6 +63,7 @@ def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dic
 
     metadata = {
         "schema": "demo-f-jax-prior-v1",
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "source_checkpoint": str(checkpoint_path),
         "source_checkpoint_sha256": sha256(checkpoint_path),
         "dataset_repository_id": checkpoint["dataset_repository_id"],

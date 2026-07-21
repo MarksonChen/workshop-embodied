@@ -18,6 +18,9 @@ OUT = ROOT / "out"
 DATA_ROOT = Path(os.environ.get("ALDARONDO_ROOT", "/workspace/data/Aldarondo2024"))
 ANIMAL = "coltrane"
 FPS = 50
+FEATURE_DIM = 60
+LEGACY_FEATURE_CONTRACT_VERSION = "demo-f-fetch-features-v1"
+FEATURE_CONTRACT_VERSION = LEGACY_FEATURE_CONTRACT_VERSION
 
 
 @dataclass(frozen=True)
@@ -105,7 +108,6 @@ class PriorConfig:
     """Deliberately small, independently tunable Demo F model."""
 
     clip_frames: int = 64
-    crop_stride: int = 16
     downsample: int = 4
     latent_dim: int = 16
     history_tokens: int = 4
@@ -124,3 +126,7 @@ class PriorConfig:
     # safe one-step prediction from drifting into saturation at generation time.
     joint_limit_penalty: float = 10.0
     training_rollout_tokens: int = 4
+
+    def __post_init__(self) -> None:
+        if self.future_tokens != 1:
+            raise ValueError("Demo F uses one next-token head and autoregressive rollout")

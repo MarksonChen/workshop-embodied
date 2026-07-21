@@ -1,4 +1,4 @@
-"""Frozen prior plus zero-initialized residual PPO actor."""
+"""Frozen prior plus the accepted zero-initialized bounded PPO adapter."""
 
 from __future__ import annotations
 
@@ -9,25 +9,29 @@ from flax import linen
 from brax.training import distribution, networks
 from brax.training.agents.ppo import networks as ppo_networks
 
-from demo_h.interfaces import (
+from demo_h.config import (
+    ACTION_DIM,
     BASE_OBS_DIM,
+    BUFFER_FRAMES,
+    COMMAND_DIM,
     COMMAND_SLICE,
     FEATURE_BUFFER_SLICE,
     FEATURE_DIM,
+    HISTORY_TOKENS,
     PHASE_SLICE,
     PLAN_SLICE,
     PREVIOUS_CONTROL_SLICE,
 )
 
 
-ACTION_DIM = 10
-# The imperfect prior must be escapable: this permits nearly the full bounded
-# action range while retaining an exactly zero residual at initialization.
+# The accepted adapter stays close enough to the controller for stable,
+# workshop-scale post-training. It is deliberately bounded and must not be
+# described as an unconstrained policy initialized from the prior.
 RESIDUAL_MEAN_SCALE = 2.0
 RESIDUAL_SCALE_LOGIT = 1.0
 
 
-class ZeroResidualMLP(linen.Module):
+class BoundedResidualMLP(linen.Module):
     hidden: int = 128
 
     @linen.compact
@@ -48,7 +52,7 @@ def inverse_softplus(value):
 def unpack_observation(observation):
     leading = observation.shape[:-1]
     buffer = observation[..., FEATURE_BUFFER_SLICE].reshape(
-        leading + (16, FEATURE_DIM)
+        leading + (BUFFER_FRAMES, FEATURE_DIM)
     )
     return (
         observation[..., :BASE_OBS_DIM],
@@ -63,12 +67,12 @@ def unpack_observation(observation):
 def compute_plans(prior, observation):
     _, buffer, _, _, _, command = unpack_observation(observation)
     leading = observation.shape[:-1]
-    flat_buffer = buffer.reshape((-1, 16, FEATURE_DIM))
-    flat_command = command.reshape((-1, 3))
+    flat_buffer = buffer.reshape((-1, BUFFER_FRAMES, FEATURE_DIM))
+    flat_command = command.reshape((-1, COMMAND_DIM))
 
     def one(feature_buffer, raw_command):
         tokens = prior.encode(feature_buffer)
-        return prior.predict_plan(tokens[-4:], raw_command)
+        return prior.predict_plan(tokens[-HISTORY_TOKENS:], raw_command)
 
     plan = jax.vmap(one)(flat_buffer, flat_command)
     return plan.reshape(leading + (prior.metadata["config"]["latent_dim"],))
@@ -111,12 +115,16 @@ def make_residual_ppo_networks(
     *,
     prior,
 ):
+    # Brax supplies this callback as part of the network-factory protocol.  The
+    # frozen prior instead needs raw observations and applies its own exported
+    # feature/command normalization inside ``frozen_context``.
+    del preprocess_observations_fn
     if action_size != ACTION_DIM:
         raise ValueError(action_size)
     if isinstance(observation_size, dict):
         raise TypeError("Demo H uses one flat observation")
     observation_dim = int(observation_size[-1])
-    residual = ZeroResidualMLP()
+    residual = BoundedResidualMLP()
     dummy_obs = jnp.zeros((1, observation_dim), dtype=jnp.float32)
     _, _, dummy_compact = frozen_context(prior, dummy_obs)
 

@@ -10,6 +10,13 @@ from .dataset import hindsight_commands
 from .dataset.contract import COMMAND_FRAME, COMMAND_FUTURE_FRAME
 
 
+def command_frames(anchors: np.ndarray, config: PriorConfig) -> tuple[np.ndarray, np.ndarray]:
+    """Demo F commands begin at the first frame of the predicted state token."""
+
+    start = np.asarray(anchors, np.int64) * config.downsample
+    return start, start + (COMMAND_FUTURE_FRAME - COMMAND_FRAME)
+
+
 @torch.inference_mode()
 def encode_in_batches(model, values: torch.Tensor, batch_size: int = 512) -> torch.Tensor:
     """Encode a complete split without requiring it to fit in one GPU batch."""
@@ -57,10 +64,11 @@ def predictor_windows(
         [tokens[:, anchor : anchor + target_tokens] for anchor in anchors],
         dim=1,
     ).flatten(0, 1)
+    command_start, _ = command_frames(anchors, config)
     raw_command = hindsight_commands(
         dataset.root_position,
         dataset.root_quaternion,
-        anchors * config.downsample,
+        command_start,
         command_horizon,
     ).reshape(-1, 3)
     return history, future, torch.from_numpy(raw_command).to(tokens.device), anchors

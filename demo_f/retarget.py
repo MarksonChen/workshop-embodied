@@ -17,7 +17,6 @@ import argparse
 import json
 import math
 from dataclasses import asdict
-from pathlib import Path
 
 import h5py
 import jax
@@ -40,7 +39,7 @@ from .config import (
     ClipSpec,
     RetargetConfig,
 )
-from .kinematics import fetch_feet
+from .kinematics import fetch_feet, world_feet
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
@@ -291,22 +290,11 @@ def optimize_batch(
     return np.asarray(JOINT_LIMIT * jnp.tanh(raw), dtype=np.float32), losses
 
 
-def _world_feet(root_position, yaw, local_feet):
-    cosine, sine = np.cos(yaw), np.sin(yaw)
-    rotation = np.zeros((len(yaw), 3, 3), dtype=np.float32)
-    rotation[:, 0, 0] = cosine
-    rotation[:, 0, 1] = -sine
-    rotation[:, 1, 0] = sine
-    rotation[:, 1, 1] = cosine
-    rotation[:, 2, 2] = 1.0
-    return root_position[:, None] + np.einsum("tij,tfj->tfi", rotation, local_feet)
-
-
 def diagnostics(spec: ClipSpec, source: dict, angles: np.ndarray, loss_trace: list[float]) -> dict:
     actual_local = np.asarray(fetch_feet(jnp.asarray(angles)))
     target_local = source["target_feet_local"]
     error = actual_local - target_local
-    world = _world_feet(source["root_position"], source["yaw"], actual_local)
+    world = world_feet(source["root_position"], source["yaw"], actual_local)
     speed = np.zeros(world.shape[:2], np.float32)
     speed[1:] = np.linalg.norm(np.diff(world, axis=0), axis=-1) * FPS
     contacts = source["contacts"]

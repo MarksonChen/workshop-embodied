@@ -1,7 +1,7 @@
 import numpy as np
 
 from demo_f.features import trajectory_features
-from demo_g.features import transition_feature
+from demo_f.jax_features import transition_feature
 
 
 def test_online_transition_matches_offline_feature_contract():
@@ -33,6 +33,20 @@ def test_online_transition_matches_offline_feature_contract():
     offline = trajectory_features(
         root[None], quaternion[None], angles[None], feet[None], contacts[None]
     )[0]
+    frame_zero = np.asarray(
+        transition_feature(
+            root[0] - (root[1] - root[0]),
+            root[0],
+            quaternion[0],
+            quaternion[0],
+            angles[0] - (angles[1] - angles[0]),
+            angles[0],
+            feet[0] - (feet[1] - feet[0]),
+            feet[0],
+            contacts[0],
+        )
+    )
+    np.testing.assert_allclose(offline[0], frame_zero, atol=1e-6, rtol=1e-6)
     online = np.stack(
         [
             np.asarray(

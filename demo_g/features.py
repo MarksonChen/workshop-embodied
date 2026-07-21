@@ -1,80 +1,17 @@
-"""Pure-JAX online form of Demo F's frozen 60-D Fetch feature contract."""
+"""Compatibility imports for the shared Demo F feature contract."""
 
-from __future__ import annotations
+from demo_f.jax_features import (
+    CONTACT_VELOCITY_EPS,
+    contact_flags,
+    matrix_rotvec,
+    quaternion_matrix,
+    transition_feature,
+)
 
-import jax.numpy as jnp
-
-
-FPS = 50.0
-FEATURE_DIM = 60
-
-
-def quaternion_matrix(quaternion):
-    """Convert a normalized wxyz quaternion to a body-to-world matrix."""
-
-    quaternion = quaternion / jnp.maximum(jnp.linalg.norm(quaternion), 1e-8)
-    w, x, y, z = quaternion
-    return jnp.asarray(
-        (
-            (1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)),
-            (2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)),
-            (2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)),
-        )
-    )
-
-
-def matrix_rotvec(matrix):
-    """Convert a relative rotation matrix to its local rotation vector."""
-
-    cosine = jnp.clip((jnp.trace(matrix) - 1) / 2, -1.0, 1.0)
-    angle = jnp.arccos(cosine)
-    skew = jnp.asarray(
-        (
-            matrix[2, 1] - matrix[1, 2],
-            matrix[0, 2] - matrix[2, 0],
-            matrix[1, 0] - matrix[0, 1],
-        )
-    )
-    sine = jnp.sin(angle)
-    scale = jnp.where(jnp.abs(sine) > 1e-5, angle / (2 * sine), 0.5)
-    return skew * scale
-
-
-def transition_feature(
-    previous_root_position,
-    root_position,
-    previous_root_quaternion,
-    root_quaternion,
-    previous_joint_angles,
-    joint_angles,
-    previous_feet_local,
-    feet_local,
-    contacts,
-):
-    """Construct the feature at the current frame from one causal transition."""
-
-    previous_rotation = quaternion_matrix(previous_root_quaternion)
-    rotation = quaternion_matrix(root_quaternion)
-    relative = previous_rotation.T @ rotation
-    world_velocity = (root_position - previous_root_position) * FPS
-    local_velocity = rotation.T @ world_velocity
-    rotation_6d = relative[:, :2].reshape(-1)
-    angular_velocity = matrix_rotvec(relative) * FPS
-    joint_velocity = (joint_angles - previous_joint_angles) * FPS
-    feet_velocity = (feet_local - previous_feet_local) * FPS
-    feature = jnp.concatenate(
-        (
-            local_velocity[:2],
-            root_position[2:3],
-            rotation_6d,
-            angular_velocity,
-            joint_angles,
-            joint_velocity,
-            feet_local.reshape(-1),
-            feet_velocity.reshape(-1),
-            contacts.astype(jnp.float32),
-        )
-    )
-    if feature.shape != (FEATURE_DIM,):
-        raise AssertionError(feature.shape)
-    return feature
+__all__ = [
+    "CONTACT_VELOCITY_EPS",
+    "contact_flags",
+    "matrix_rotvec",
+    "quaternion_matrix",
+    "transition_feature",
+]

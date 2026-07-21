@@ -10,8 +10,8 @@ from brax.envs.wrappers.training import AutoResetWrapper, EpisodeWrapper
 from brax.training import distribution
 
 from demo_a.train_fetch import RawKeyVmapWrapper
-from demo_h.interfaces import PHASE_SLICE, PLAN_SLICE
-from demo_h.policy import ACTION_DIM, compute_plans, reference_parameters
+from demo_h.config import ACTION_DIM, PHASE_SLICE, PLAN_SLICE
+from demo_h.policy import compute_plans, reference_parameters
 
 
 class BatchedPlanWrapper(Wrapper):

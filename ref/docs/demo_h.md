@@ -55,7 +55,10 @@ blur Demo B's definition: the controls depend on a simulator, contact model,
 actuator strength, and feedback law not contained in the recording.
 
 The action labels are also not animal torques. They are controls for the much
-larger Fetch morphology under Fetch physics.
+larger Fetch morphology under Fetch physics. The policy action is normalized
+control `u in [-1,1]^10`; `requested_actuator_torque=-300u` is a derived field
+before joint-limit gating, not the policy target, measured animal torque, or a
+guarantee of the torque ultimately applied by the simulator.
 
 ## 3. Relationship to A, F, G, and GPC
 
@@ -171,8 +174,14 @@ The accepted physical variant is
 | minimum upright | 0.514 |
 | build time | 84.4 s |
 
-Independent paired-control replay recovers stored positions, orientations, and
-joint angles to approximately `1e-5`; shuffled controls are materially worse.
+Independent paired-control replay on the same H100/CUDA backend recovers stored
+positions, orientations, and joint angles to approximately `1e-5`; shuffled
+controls are materially worse. CPU and GPU legacy-PBD trajectories diverge
+after contact, so exact replay deliberately fails on a mismatched backend.
+The accepted v1 feature contract forward-fills frame-zero rates and contacts;
+the separately versioned PPO observation contract retains Fetch's native online
+contact bits. Changing either convention requires retraining rather than a
+shape-compatible silent substitution.
 Session splits remain disjoint, and every shard and parent manifest is hashed.
 
 The realized command-speed distribution is broad but not uniform. On training
@@ -224,6 +233,13 @@ This is state-first generation plus a feedback inverse-dynamics actor. It is
 not the causally action-conditioned learned transition
 `p(x_{t+1}|x_t,u_t)` used for planning in a general learned simulator.
 
+The F/H command anchors differ by exactly one frame on purpose. For plan anchor
+`a`, Demo F's state predictor measures its hindsight command from `4a` to
+`4a+31`. Demo H must choose control `u[4a-1]` before state `x[4a]` exists, so
+its command runs from `4a-1` to `4a+30`. At `a=4`, those intervals are 16→47
+and 15→46. Both span 31 frames (0.62 seconds); using Demo F's start frame for
+Demo H would cross the causal action/state boundary.
+
 ### 5.2 Training details
 
 Train from scratch for the accepted timing distribution:
@@ -238,11 +254,21 @@ Train from scratch for the accepted timing distribution:
 - predicted-previous-control input on 75%;
 - plan noise standard deviation 0.05.
 
+This is now the only training path. `train_prior` always initializes the
+tokenizer, state predictor, and action decoder from scratch; the rejected
+Demo F-checkpoint initialization branch has been removed.
+
 The action decoder predicts a correction to the previous pre-tanh control mean.
 Its per-joint Gaussian standard deviations are calibrated on residuals. Exact
 boundary controls remain stored in the data, but recurrent likelihood input is
 clipped to `[-0.98,0.98]` because a tanh Gaussian cannot represent exactly
 `+/-1` with finite mean.
+
+Two likelihood names make the probability model inspectable in notebooks.
+`DemoHPrior.state_log_prob` is the calibrated Gaussian next-state-token log
+likelihood per latent dimension. The offline action report uses
+`action_tanh_nll_per_dimension`, including the tanh change-of-variables
+Jacobian required for bounded normalized controls.
 
 ### 5.3 Held-out and physical gates
 
@@ -265,20 +291,47 @@ When the frozen JAX prior acts without PPO at a 1.5 command:
 
 | reset | survival | mean speed | displacement | minimum upright | saturation |
 |---|---:|---:|---:|---:|---:|
-| in-support physical state | 100% | 0.988 | 4.94 | 0.982 | 0.08% |
-| ordinary standing state | 100% | 1.031 | 5.16 | 0.982 | 0% |
+| in-support physical state | 100% | 1.383 | 6.92 | 0.992 | 0% |
+| ordinary standing state | 100% | 0.872 | 4.36 | 0.975 | 0% |
 
 Every foot changes contact in both rollouts. This establishes an executable
 pretrained policy before RL begins.
 
 ## 6. RL post-training
 
+The live comparison has three clearly separated roles:
+
+| arm | initialization and policy | learning objective |
+|---|---|---|
+| Demo A | ordinary scratch PPO policy | task reward |
+| H1 | frozen Demo H prior plus zero-initialized bounded adapter | task reward, `beta=0` |
+| H2 | the same prior and adapter | task reward plus reference KL, accepted `beta=0.10` |
+
+Demo H's evaluator accepts H1 and H2 only. The former H0 route had a different
+observation and actor contract; it is removed rather than presented as a
+matched scratch baseline. Use Demo A for the pedagogical scratch comparison,
+and train matched H1/H2 seeds before making an algorithm-level claim.
+
 ### 6.1 Policy architecture
 
 Freeze the motion tokenizer, planner, base action mean, action standard
 deviation, and a separate reference copy. The trainable actor is a two-layer
-128-unit residual MLP initialized with zero output weights. It sees a compact
-context containing:
+128-unit residual MLP initialized with zero output weights.
+
+`demo_h.config` owns one immutable online observation layout used by the
+environment, prior, policy, evaluator, and checkpoint loader:
+
+```text
+Demo A physical observation                         101
+16 frames x 60-D body feature                       960
+previous normalized control                          10
+phase one-hot / predicted plan / command          4+16+3
+                                                    ----
+                                                    1094
+```
+
+The prior consumes the full feature buffer. The adapter sees a compact context
+derived from that frozen layout:
 
 - Demo A's 101-D physical observation;
 - latest normalized 60-D body feature;
@@ -346,7 +399,7 @@ and evaluator. Put all 12 five-second trajectories in one labeled video.
 
 | aggregate over six commands | β=.075 | β=.10 |
 |---|---:|---:|
-| mean absolute speed error | 0.128 | **0.079** |
+| mean absolute speed error (Fetch units/s) | 0.128 | **0.079** |
 | minimum survival | 96.8% | **100%** |
 | strict stride gates passed | **5/6** | 4/6 |
 | mean joint-speed RMS | **3.165** | 4.998 |
@@ -359,7 +412,7 @@ workshop presentation.
 
 The accepted command sweep is:
 
-| command | realized mean ± temporal std | survival | upright mean | stride gate |
+| command (Fetch units/s) | realized mean ± temporal std (Fetch units/s) | survival | upright mean | stride gate |
 |---:|---:|---:|---:|---:|
 | 1.5 | 1.471 ± 0.188 | 100% | 0.996 | pass |
 | 2.0 | 2.010 ± 0.221 | 100% | 0.997 | pass |
@@ -386,9 +439,11 @@ Demo H is accepted for a pedagogical demonstration because:
   rollout;
 - all learning signals remain separable in code and explanation.
 
-It is not an algorithm-level result. The accepted high-speed arm has one policy
-training seed, no matched high-speed H0/H1 report, and two failed stride cells.
-Do not claim that β=0.10 is statistically superior to β=0.075 or scratch PPO.
+It is not an algorithm-level result. The accepted H2 arm has one policy
+training seed, no accepted matched high-speed H1 report, and two failed stride
+cells. Demo A is the scratch teaching baseline, not a hidden third arm in the
+Demo H evaluator. Do not claim that β=0.10 is statistically superior to
+β=0.075, H1, or scratch PPO.
 
 ## 9. Reproduction
 
@@ -414,7 +469,7 @@ Train and export the prior:
 
 ```bash
 uv run --extra workshop python -m demo_h.dataset.validate
-uv run --extra workshop python -m demo_h.train_prior --from-scratch
+uv run --extra workshop python -m demo_h.train_prior
 uv run --extra workshop python -m demo_h.evaluate_prior
 uv run --extra workshop python -m demo_h.export_jax
 ```
@@ -428,10 +483,19 @@ env -u LD_LIBRARY_PATH uv run --no-project --isolated \
   python -m demo_h.train --arm h2 --seed 0
 ```
 
-Use `visualize_speeds.py` and `render_speed_comparison.py` as shown in the
-operational README. The evaluator batches all requested commands into one
-compilation. The renderer reuses static geometry and defaults to 25 fps while
-preserving real playback duration.
+Use `python -m demo_h.visualize` and
+`python -m demo_h.render_speed_comparison` as shown in the operational README.
+The evaluator batches all requested commands into one compilation. The
+renderer reuses static geometry and defaults to 25 fps while preserving real
+playback duration. `demo_h.api.rollout_speeds` and
+`demo_h.api.render_sweeps` expose the same operations as callables.
+
+The API keeps those physics imports lazy, but it does not remove the binary
+runtime boundary. Projection, physics evaluation, PPO, rollout, and rendering
+require Brax 0.12.3 with JAX/JAXlib 0.4.30. The main workshop notebook uses a
+different JAX/Brax/Torch stack, so invoke these stages in isolated subprocess
+cells or select a separate pinned kernel; do not mix both stacks in one Python
+process.
 
 ## 10. Artifact identities
 
@@ -448,31 +512,47 @@ accepted local artifacts are identified by SHA-256:
 | accepted speed metrics | `632ba2dd1775518042a0f2af6f09f0db88e26ecc94066dd82a4306002a35d710` |
 | β comparison video | `e7568edf8f722cb2f6b2a8277877b1bda6436d92d6d4fa2b554af2055d820001` |
 
+Current PPO saves use a fail-closed v2 envelope containing the H1/H2 arm,
+1,094-D observation size, ten-action size, and exact prior hash. Loaders reject
+any mismatch. The accepted β=.10 checkpoint hash above belongs to the earlier
+payload format; its adjacent JSON report binds the arm and prior hash before
+the legacy payload is loaded. This compatibility path preserves the accepted
+artifact without weakening provenance checks.
+
 ## 11. Package map
 
 ```text
+demo_f/
+  commands.py                  shared egocentric command construction
+  features.py / jax_features.py shared 60-D offline/online features
+  jax_models.py                shared pure-JAX network operations
+  metrics.py / losses.py       shared validation metrics and prior losses
+  prior.py / artifacts.py      callable Demo F prior and artifact hashing
+  api.py                       notebook-facing Demo F surface
+
 demo_h/
-  config.py                    frozen physical and training constants
+  api.py                       notebook-facing data/prior/rollout surface
+  artifacts.py                 arm, observation, and prior-bound checkpoints
+  config.py                    frozen physics, prior, and observation layout
   dataset/
     contract.py                schema, variants, and accepted default roots
     project.py                 exact-physics pseudo-label generator
     validate.py                schema, split, replay, and shuffle gates
-    render*.py                 physical data inspection
+    render_comparisons.py      physical data inspection
     DATASET_CARD.md             accepted derivation and limitations
   models.py                    feedback Gaussian action decoder
   windows.py                   explicit state/action temporal alignment
-  train_prior.py               tokenizer, planner, and decoder fitting
+  train_prior.py               from-scratch tokenizer, planner, and decoder fitting
   evaluate_prior.py            held-out state/action gates
   export_jax.py                PyTorch-to-JAX export and parity
   prior.py                     frozen pure-JAX prior
   env.py                       Demo A task plus causal prior state
   policy.py                    frozen base plus zero residual actor
   wrappers.py                  plan refresh and exact KL reward pair
-  train.py                     H0/H1/H2 PPO entry point
-  evaluate.py                  shaping-disabled rollout evaluation
-  gait_metrics.py              validation-only four-limb diagnostics
-  visualize_speeds.py          one-compilation command sweep
-  render_speed_comparison.py   cached-scene tiled video renderer
+  train.py                     H1/H2 PPO entry point
+  evaluate.py                  shaping-disabled H1/H2 rollout evaluation
+  visualize.py                 one-compilation command sweep
+  render_speed_comparison.py   callable cached-scene tiled renderer
   experiment/DECISIONS.md      append-only empirical record
 ```
 
@@ -485,5 +565,5 @@ demo_h/
 - Its retargeted data contain visible cadence and morphology artifacts; RL
   adaptation is motivated partly by those imperfections.
 - Naturalness diagnostics validate behavior but never enter the loss.
-- Multiple policy seeds and matched scratch/warm-start arms are required before
-  making an algorithm-level claim.
+- Multiple policy seeds, matched H1/H2 runs, and a carefully matched Demo A
+  scratch baseline are required before making an algorithm-level claim.

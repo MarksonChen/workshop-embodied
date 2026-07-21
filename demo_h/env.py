@@ -9,12 +9,17 @@ from brax.v1 import jumpy as jp
 
 from demo_a.fetch_run import FetchRun
 from demo_f.kinematics import fetch_feet
-from demo_g.features import transition_feature
+from demo_f.jax_features import transition_feature
 from demo_h.config import (
+    ACTION_DIM,
+    BUFFER_FRAMES,
     COMMAND_HORIZON_SECONDS,
+    FETCH_FOOT_NAMES,
+    OBS_DIM,
+    PHASE_DIM,
+    PLAN_DIM,
     TARGET_SPEED_FETCH,
 )
-from demo_h.interfaces import ACTION_DIM, BUFFER_FRAMES, OBS_DIM, PHASE_DIM
 
 
 class DemoHFetchRun(FetchRun):
@@ -44,7 +49,9 @@ class DemoHFetchRun(FetchRun):
         self.command_override = (
             None if command is None else jp.array(command, dtype=jp.float32)
         )
-        self.foot_indices = jp.array((4, 6, 8, 10))
+        self.foot_indices = jp.array(
+            tuple(self.sys.body.index[name] for name in FETCH_FOOT_NAMES)
+        )
 
     def _command(self, target_speed):
         if self.command_override is not None:
@@ -63,6 +70,8 @@ class DemoHFetchRun(FetchRun):
         angles, _ = self.sys.joints[0].angle_vel(qp)
         previous_feet = fetch_feet(previous_angles)
         feet = fetch_feet(angles)
+        # Keep Fetch's native observation contact convention: the accepted
+        # policy checkpoint was trained on exactly these four values.
         contacts = observation[-qp.pos.shape[0] :][self.foot_indices]
         return transition_feature(
             previous_qp.pos[self.torso_idx],
@@ -110,7 +119,7 @@ class DemoHFetchRun(FetchRun):
             h_feature_buffer=jp.repeat(standing[None], BUFFER_FRAMES, axis=0),
             h_previous_control=jp.zeros(ACTION_DIM),
             h_phase=jp.int32(0),
-            h_plan=jp.zeros(16),
+            h_plan=jp.zeros(PLAN_DIM),
             h_target_speed=target_speed,
             h_command=self._command(target_speed),
         )

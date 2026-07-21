@@ -1,6 +1,6 @@
 import numpy as np
 
-from demo_h.gait_metrics import (
+from demo_f.metrics import (
     four_limb_contact_metrics,
     four_limb_locomotion_metrics,
 )
@@ -46,7 +46,7 @@ def synthetic_stride(frames=250, period=25):
 def test_regular_stride_passes_offline_stride_gate():
     report = four_limb_locomotion_metrics(synthetic_stride())
     assert report["passes_four_limb_stride_gate"]
-    assert min(report["fore_aft_excursion_m"]) > 0.3
+    assert min(report["fore_aft_excursion_fetch_units"]) > 0.3
 
 
 def test_vertical_contact_tapping_fails_without_fore_aft_stride():

@@ -14,11 +14,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .artifacts import sha256
 from .config import FPS, OUT
 from .dataset import load_split
 from .dataset.contract import DYNAMIC_ROOT
 from .features import SL
-from .generate import (
+from .prior import (
     COMMAND_HORIZON_SECONDS,
     SPEED_SMOOTHING_FRAMES,
     checkpoint_command_scale,
@@ -37,10 +38,8 @@ EVAL_SEEDS = 3
 
 
 @torch.inference_mode()
-def likelihood_report(
-    checkpoint, config, tokenizer, predictor, train, evaluation
-) -> dict:
-    """Audit whether real next tokens prefer their matching speed command."""
+def _evaluation_windows(checkpoint, config, tokenizer, evaluation):
+    """Build normalized held-out windows once for every predictor metric."""
 
     device = next(tokenizer.parameters()).device
     feature_mean = torch.as_tensor(checkpoint["feature_mean"], device=device)
@@ -61,6 +60,45 @@ def likelihood_report(
         checkpoint.get("command_std", np.ones(3, np.float32)), device=device
     )
     command = (raw_command - command_mean) / command_std
+    return history, future, raw_command, command
+
+
+@torch.inference_mode()
+def prediction_report(checkpoint, config, tokenizer, predictor, evaluation) -> dict:
+    """Compute prediction and command-use metrics on the requested split."""
+
+    history, future, _, command = _evaluation_windows(
+        checkpoint, config, tokenizer, evaluation
+    )
+    prediction = predictor.predict(history, command)
+    persistence = history[:, -1:, :].expand_as(future)
+    own_error = torch.square(prediction - future).mean(dim=(1, 2))
+    reversed_prediction = predictor.predict(history, command.flip(0))
+    reversed_error = torch.square(reversed_prediction - future).mean(dim=(1, 2))
+    prediction_mse = float(own_error.mean())
+    persistence_mse = float(torch.square(persistence - future).mean())
+    return {
+        "prediction_mse": prediction_mse,
+        "persistence_mse": persistence_mse,
+        "skill_over_persistence": 1.0 - prediction_mse / persistence_mse,
+        "command_vs_reversed_win_rate": float(
+            (own_error < reversed_error).float().mean()
+        ),
+    }
+
+
+@torch.inference_mode()
+def likelihood_report(
+    checkpoint, config, tokenizer, predictor, train, evaluation
+) -> dict:
+    """Audit whether real next tokens prefer their matching speed command."""
+
+    history, future, raw_command, command = _evaluation_windows(
+        checkpoint, config, tokenizer, evaluation
+    )
+    device = next(tokenizer.parameters()).device
+    command_mean = torch.as_tensor(checkpoint["command_mean"], device=device)
+    command_std = torch.as_tensor(checkpoint["command_std"], device=device)
     sigma = checkpoint["sigma"]
 
     real_logp = predictor.log_prob(history, future, command, sigma)
@@ -261,22 +299,43 @@ def evaluate_checkpoint(
     dataset_root: Path = DYNAMIC_ROOT,
     evaluation_split: str = "validation",
 ) -> dict:
-    checkpoint, config, tokenizer, predictor = load_prior(checkpoint_path)
+    prior = load_prior(checkpoint_path)
+    checkpoint = prior.checkpoint
+    manifest_path = Path(dataset_root) / "manifest.json"
+    if checkpoint["dataset_manifest_sha256"] != sha256(manifest_path):
+        raise ValueError("checkpoint was not trained from this dataset manifest")
     train = load_split("train", dataset_root)
     validation = load_split(evaluation_split, dataset_root)
     report = rollout_report(
-        checkpoint, config, tokenizer, predictor, train, validation
+        checkpoint,
+        prior.config,
+        prior.tokenizer,
+        prior.predictor,
+        train,
+        validation,
     )
     likelihood = likelihood_report(
-        checkpoint, config, tokenizer, predictor, train, validation
+        checkpoint,
+        prior.config,
+        prior.tokenizer,
+        prior.predictor,
+        train,
+        validation,
     )
-    metrics = checkpoint["metrics"]
+    prediction = prediction_report(
+        checkpoint,
+        prior.config,
+        prior.tokenizer,
+        prior.predictor,
+        validation,
+    )
     rows = report["trials"]
     realized = np.asarray(report["realized_forward_speed_mps"])
     gates = {
         "finite": bool(np.isfinite(realized).all()),
-        "beats_persistence": metrics["validation_mse"] < metrics["persistence_mse"],
-        "command_win_rate": metrics["command_vs_reversed_win_rate"] >= 0.60,
+        "beats_persistence": prediction["prediction_mse"]
+        < prediction["persistence_mse"],
+        "command_win_rate": prediction["command_vs_reversed_win_rate"] >= 0.60,
         "beats_shuffled_future": likelihood["real_minus_shuffled_logp"] > 0,
         "speed_likelihood_diagonal": likelihood["diagonal_wins"]
         == len(likelihood["speed_centers_mps"]),
@@ -289,9 +348,11 @@ def evaluate_checkpoint(
         {
             "checkpoint": str(checkpoint_path),
             "split": evaluation_split,
-            "prediction_skill_over_persistence": 1
-            - metrics["validation_mse"] / metrics["persistence_mse"],
-            "command_win_rate": metrics["command_vs_reversed_win_rate"],
+            "prediction_skill_over_persistence": prediction[
+                "skill_over_persistence"
+            ],
+            "command_win_rate": prediction["command_vs_reversed_win_rate"],
+            "prediction": prediction,
             "likelihood": likelihood,
             "gates": gates,
             "passed_gates": all(gates.values()),

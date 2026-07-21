@@ -13,9 +13,11 @@ retargeted motion
 ```
 
 The future-state targets are self-supervised because they are shifted from the
-same motion sequence. The controls are physics-derived pseudo-labels produced
-by a transparent feedback controller in exact Fetch physics; they are neither
-animal torques nor pure SSL targets. PPO still learns from scalar task reward.
+same motion sequence. The actions are bounded normalized Fetch controls
+`u in [-1,1]^10`, produced as physics-derived pseudo-labels by a transparent
+feedback controller. `-300u` is the requested actuator-axis torque before
+joint-limit gating—not measured animal torque and not necessarily the torque
+ultimately applied by the simulator. PPO still learns from scalar task reward.
 
 ## Accepted configuration
 
@@ -32,6 +34,25 @@ animal torques nor pure SSL targets. PPO still learns from scalar task reward.
 The 1.75 factor is an empirically selected temporal dilation, not the 4.6237
 Froude-similarity factor used by canonical Demo F. Keeping these as separately
 versioned datasets prevents either interpretation from being silently changed.
+
+`demo_h.config` owns one immutable 1,094-D online observation layout:
+
+```text
+Demo A physical observation                         101
+16 frames x Demo F's 60-D body feature              960
+previous normalized control                          10
+control phase / predicted plan / command          4+16+3
+                                                    ----
+                                                    1094
+```
+
+Environment, prior, actor, evaluator, and checkpoints all use these slices.
+Changing a prior dimension without changing this frozen contract fails early.
+Contract v1 also preserves two accepted-artifact details: stored clips
+forward-fill undefined frame-zero rates/contacts from their first transition,
+while online PPO features retain Fetch's native contact observation. The PPO
+checkpoint now records this online observation-contract version; harmonizing
+the two contact conventions requires a newly trained/versioned artifact.
 
 ## Build and validate the physical dataset
 
@@ -51,20 +72,41 @@ env -u LD_LIBRARY_PATH uv run --no-project --isolated \
 uv run --extra workshop python -m demo_h.dataset.validate
 ```
 
-For an independent exact-physics replay check, run the validator inside the
-isolated Brax environment with `--replay-clips 16`. Stored control `u[t]` acts
-during `[t,t+1)` and produces stored state `x[t+1]`.
+Projection refuses to replace an existing manifest unless `--overwrite` is
+passed explicitly, partial probes must use a distinct output directory, and
+source-overlapping, broad, or existing non-release targets are rejected.
+
+For an independent exact-physics replay check, use the same CUDA backend as the
+projection:
+
+```bash
+env -u LD_LIBRARY_PATH PYTHONPATH=. uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax[cuda12]==0.4.30' \
+  --with 'jaxlib==0.4.30' --with 'scipy>=1.15' \
+  python -m demo_h.dataset.validate \
+  --dataset-root demo_h/dataset/release_retime_1p75 --replay-clips 16
+```
+
+Stored control `u[t]` acts during `[t,t+1)` and produces stored state
+`x[t+1]`. The validator rejects a CPU replay early: contact-rich legacy PBD
+trajectories diverge across CPU and GPU even at matched package versions.
+
+That action boundary explains an intentional one-frame command shift. For a
+target token at anchor `a`, Demo F conditions state prediction on frames
+`4a`→`4a+31`; Demo H conditions control `u[4a-1]` on frames
+`4a-1`→`4a+30`. At the first anchor these are 16→47 and 15→46. Both horizons
+are 0.62 seconds; the shift is causal, not a dataset mismatch.
 
 The accepted build takes 84.4 seconds and passes 99.09% of candidate clips.
 Across shards, median joint tracking RMSE is 0.103 rad, mean actuator
 saturation is 1.36%, minimum torso height is 1.133, and minimum uprightness is
 0.514. Replaying paired controls recovers saved trajectories to approximately
-`1e-5`; shuffled controls are materially worse.
+`1e-5` on the same CUDA backend; shuffled controls are materially worse.
 
 ## Train and validate the frozen prior
 
 ```bash
-uv run --extra workshop python -m demo_h.train_prior --from-scratch
+uv run --extra workshop python -m demo_h.train_prior
 uv run --extra workshop python -m demo_h.evaluate_prior
 uv run --extra workshop python -m demo_h.export_jax
 
@@ -83,13 +125,34 @@ The accepted prior trains in 70.8 seconds. On the held-out test split it:
 - improves 20-step closed-loop action MSE 86.9% over repeating the initial
   control.
 
+`DemoHPrior.state_log_prob` exposes the calibrated Gaussian next-state-token
+likelihood per latent dimension. The offline bounded-action likelihood is
+reported as `action_tanh_nll_per_dimension`; it includes the tanh
+change-of-variables Jacobian rather than scoring bounded controls as if they
+were unconstrained Gaussian samples. Prior training always starts from random
+initialization; the removed Demo F-checkpoint branch is not part of the live
+path.
+
 Copying the previous 50 Hz control is 6.8% better for exactly one step, which
 is expected for very smooth controls and is not used as the rollout gate. From
 an ordinary standing reset, the frozen prior survives five seconds, travels
-5.16 units, remains upright, switches all four foot contacts, and never
+4.36 Fetch units, keeps minimum uprightness at 0.975, switches all four foot
+contacts, and never
 saturates an actuator.
 
-## Train the accepted RL policy
+## Post-train the two live RL arms
+
+Use Demo A's ordinary task-only PPO as the scratch baseline. Demo H itself has
+only two live, matched post-training arms:
+
+- **H1:** the frozen prior plus the same zero-initialized bounded residual
+  actor, trained with task reward and `beta=0`;
+- **H2:** the same prior and residual actor, with the accepted reference-KL
+  coefficient `beta=0.10`.
+
+The removed H0 path used a different observation/policy contract and is not a
+valid live comparison. Train H1 by changing only `--arm h2` to `--arm h1` in
+the command below.
 
 ```bash
 env -u LD_LIBRARY_PATH uv run --no-project --isolated \
@@ -115,6 +178,13 @@ The accepted 30M-transition run takes 95.2 seconds on the current H100. The
 frozen-prior and PPO stages together take 166 seconds; including the one-time
 physics projection gives approximately 250 seconds, still under five minutes.
 
+New PPO checkpoints are fail-closed envelopes containing the arm, 1,094-D
+observation contract, ten-action contract, and the exact frozen-prior SHA-256.
+Evaluation refuses an arm or prior mismatch. The accepted β=0.10 checkpoint
+predates that envelope, so its adjacent JSON sidecar verifies the arm and exact
+prior hash before the legacy payload is loaded; the current code supplies the
+frozen observation/action dimensions.
+
 ## Inspect the accepted policy
 
 Set the checkpoint emitted by training, then create all six rollouts in one
@@ -127,7 +197,7 @@ env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu \
   uv run --no-project --isolated \
   --with 'brax==0.12.3' --with 'jax==0.4.30' \
   --with 'jaxlib==0.4.30' --with 'scipy>=1.15' \
-  python -m demo_h.visualize_speeds --arm h2 \
+  python -m demo_h.visualize --arm h2 \
   --checkpoint "$DEMO_H_CHECKPOINT" \
   --speeds 1.5 2.0 2.5 3.0 3.5 4.0 \
   --label 'beta=0.10' \
@@ -148,7 +218,12 @@ The renderer reuses static scenes, renders every second 50 Hz physics frame at
 evaluation takes about 20 seconds including startup instead of about 45
 seconds with six separate compilations.
 
-| command | realized mean | survival | four-limb stride gate |
+The metrics JSON names speeds in **Fetch units/s** and displacement in **Fetch
+units**. These are simulator coordinates, not biological m/s. Contact,
+cadence, stride, cyclicity, and other gait values in this report are
+validation-only; training never scores them.
+
+| command (Fetch units/s) | realized mean (Fetch units/s) | survival | four-limb stride gate |
 |---:|---:|---:|---:|
 | 1.5 | 1.471 | 100% | pass |
 | 2.0 | 2.010 | 100% | pass |
@@ -175,6 +250,29 @@ by:
 
 Full hashes and the append-only experiment record are in
 [`experiment/DECISIONS.md`](experiment/DECISIONS.md).
+
+## Notebook-facing surface and pinned runtime
+
+Use the stable imports for data and prior inspection:
+
+```python
+from demo_h.api import (
+    evaluate_prior,
+    load_manifest,
+    load_prior,
+    load_split,
+    render_sweeps,
+    rollout_speeds,
+)
+```
+
+`rollout_speeds` is implemented by `demo_h.visualize`; `render_sweeps` remains
+a callable in `demo_h.render_speed_comparison`. Their imports are lazy, but
+calling either still requires the pinned Brax 0.12.3/JAX 0.4.30 environment.
+The main workshop kernel intentionally carries different JAX/Brax/Torch
+versions, so run projection, physics evaluation, PPO, rollout, and rendering
+as the isolated subprocess cells shown above, or use a separate pinned kernel.
+Do not import the pinned Brax stack into the main notebook process.
 
 ## Claim boundary
 

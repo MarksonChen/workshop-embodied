@@ -164,3 +164,20 @@ This log is append-only once full model training begins.
   original per-frame renderer before temporal subsampling.
 - Retain 30M PPO transitions for the 1.5–4.0 task: the 15M midpoint remained
   materially below the final return in both accepted-weight candidates.
+
+## 2026-07-21 — bind feature, observation, and replay contracts explicitly
+
+- Preserve the accepted version-1 frame-zero feature fill and Fetch-native
+  online contact observation. The frozen prior and H2 checkpoint depend on
+  those exact semantics; future changes require a new contract version.
+- Qualify the earlier `1e-5` replay statement as same-H100/CUDA-backend
+  agreement. CPU and GPU executions of legacy contact-rich PBD agree initially
+  but diverge after contact, despite matching Brax/JAX versions.
+- Record the JAX backend, device kind, jaxlib version, and x64 mode in future
+  derived releases. Reject mismatched replay backends instead of weakening the
+  exact-replay threshold.
+- Correct the P0 in-support selector to compare the same frame-15→46 command
+  used by rollout, and initialize standing contacts from Fetch's actual reset
+  observation. This supersedes the earlier 5.16-unit standing figure: the
+  corrected five-second standing rollout travels 4.36 Fetch units with minimum
+  uprightness 0.975 and no saturated actions; both reset gates still pass.

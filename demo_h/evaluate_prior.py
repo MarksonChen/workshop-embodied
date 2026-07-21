@@ -10,11 +10,16 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+from demo_f.artifacts import sha256
+from demo_f.config import (
+    FEATURE_CONTRACT_VERSION,
+    LEGACY_FEATURE_CONTRACT_VERSION,
+)
 from demo_f.models import ConditionalTransformer, MotionAutoencoder
 from demo_f.windows import encode_in_batches
-from demo_h.config import OUT, PriorConfig
+from demo_h.config import ACTION_PHASES, OUT, PriorConfig
 from demo_h.dataset.contract import DEFAULT_ROOT
-from demo_h.dataset.loader import load_split
+from demo_h.dataset.loader import load_manifest, load_split
 from demo_h.models import FeedbackActionDecoder
 from demo_h.train_prior import (
     DEVICE,
@@ -22,15 +27,24 @@ from demo_h.train_prior import (
     _closed_loop_action_metrics,
     _state_mse,
 )
-from demo_h.windows import ACTION_PHASES, state_action_windows
+from demo_h.windows import state_action_windows
 
 
 def load_models(path: Path):
     checkpoint = torch.load(path, map_location=DEVICE, weights_only=False)
     if checkpoint.get("schema") != "demo-h-prior-v1":
         raise ValueError(f"unsupported checkpoint {checkpoint.get('schema')!r}")
+    feature_contract = checkpoint.get(
+        "feature_contract_version", LEGACY_FEATURE_CONTRACT_VERSION
+    )
+    if feature_contract != FEATURE_CONTRACT_VERSION:
+        raise ValueError(
+            f"checkpoint feature contract {feature_contract!r}; "
+            f"expected {FEATURE_CONTRACT_VERSION!r}"
+        )
     names = {field.name for field in fields(PriorConfig)}
     config = PriorConfig(**{k: v for k, v in checkpoint["config"].items() if k in names})
+    config.validate_online_contract()
     tokenizer = MotionAutoencoder(config.feature_dim, config.hidden, config.latent_dim).to(DEVICE)
     predictor = ConditionalTransformer(
         latent_dim=config.latent_dim,
@@ -54,11 +68,15 @@ def load_models(path: Path):
 @torch.inference_mode()
 def evaluate(checkpoint_path: Path, dataset_root: Path, split: str) -> dict:
     checkpoint, config, tokenizer, predictor, decoder = load_models(checkpoint_path)
+    load_manifest(dataset_root)
+    manifest_hash = sha256(Path(dataset_root) / "manifest.json")
+    if checkpoint["dataset_manifest_sha256"] != manifest_hash:
+        raise ValueError("checkpoint was not trained from this dataset manifest")
     dataset = load_split(split, dataset_root)
     feature_mean = torch.as_tensor(checkpoint["feature_mean"], device=DEVICE)
     feature_std = torch.as_tensor(checkpoint["feature_std"], device=DEVICE)
     features = (torch.as_tensor(dataset.features, device=DEVICE) - feature_mean) / feature_std
-    controls = torch.as_tensor(dataset.controls, device=DEVICE)
+    controls = torch.as_tensor(dataset.normalized_control, device=DEVICE)
     tokens = encode_in_batches(tokenizer, features)
     token_mean = torch.as_tensor(checkpoint["token_mean"], device=DEVICE)
     token_std = torch.as_tensor(checkpoint["token_std"], device=DEVICE)

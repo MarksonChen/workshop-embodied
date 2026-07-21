@@ -20,12 +20,12 @@ from brax.v1.envs import fetch
 from brax.v1.io import image
 from PIL import Image, ImageDraw, ImageFont
 
-from demo_h.config import FPS
-from demo_h.dataset.commands import hindsight_command
+from demo_f.commands import hindsight_command
+from demo_h.config import COMMAND_HORIZON_SECONDS, FPS
 from demo_h.dataset.contract import DEFAULT_ROOT
 
 
-HORIZON_SECONDS = 31 / FPS
+HORIZON_SECONDS = COMMAND_HORIZON_SECONDS
 CONNECTED_BODIES = jnp.arange(11)
 DEFAULT_SPEEDS = (1.5, 2.0, 2.5, 3.0, 4.0)
 

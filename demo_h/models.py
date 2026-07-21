@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-import math
-
 import torch
 import torch.nn as nn
 
-from demo_h.config import PRIOR_CONTROL_LIMIT
+from demo_h.config import (
+    ACTION_DIM,
+    COMMAND_DIM,
+    FEATURE_DIM,
+    PHASE_DIM,
+    PLAN_DIM,
+    PRIOR_CONTROL_LIMIT,
+)
 
 
 class FeedbackActionDecoder(nn.Module):
@@ -15,13 +20,13 @@ class FeedbackActionDecoder(nn.Module):
 
     def __init__(
         self,
-        feature_dim: int = 60,
-        latent_dim: int = 16,
-        action_dim: int = 10,
+        feature_dim: int = FEATURE_DIM,
+        latent_dim: int = PLAN_DIM,
+        action_dim: int = ACTION_DIM,
         hidden: int = 192,
     ):
         super().__init__()
-        input_dim = feature_dim + latent_dim + action_dim + 4 + 3
+        input_dim = feature_dim + latent_dim + action_dim + PHASE_DIM + COMMAND_DIM
         self.network = nn.Sequential(
             nn.Linear(input_dim, hidden),
             nn.SiLU(),
@@ -51,15 +56,20 @@ class FeedbackActionDecoder(nn.Module):
         log_std = self.log_std.clamp(-5.0, 1.0)
         return mean, log_std
 
-    def nll(self, feature, plan, previous_control, phase, command, target):
-        mean, log_std = self.distribution(
-            feature, plan, previous_control, phase, command
-        )
-        residual = (target - mean) / log_std.exp()
-        return 0.5 * (
-            residual.square() + 2.0 * log_std + math.log(2.0 * math.pi)
-        ).mean()
-
-
 def pre_tanh(control: torch.Tensor) -> torch.Tensor:
     return torch.atanh(control.clamp(-PRIOR_CONTROL_LIMIT, PRIOR_CONTROL_LIMIT))
+
+
+def tanh_gaussian_nll(
+    mean: torch.Tensor, log_std: torch.Tensor, control: torch.Tensor
+) -> torch.Tensor:
+    """Exact elementwise density after transforming a Gaussian through tanh."""
+
+    bounded = control.clamp(-PRIOR_CONTROL_LIMIT, PRIOR_CONTROL_LIMIT)
+    residual = (torch.atanh(bounded) - mean) / log_std.exp()
+    gaussian = 0.5 * (
+        residual.square()
+        + 2.0 * log_std
+        + torch.log(control.new_tensor(2.0 * torch.pi))
+    )
+    return gaussian + torch.log1p(-bounded.square())

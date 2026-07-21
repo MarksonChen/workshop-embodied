@@ -1,32 +1,41 @@
-"""Shaping-disabled, paired-seed evaluation of H0/H1/H2."""
+"""Shaping-disabled evaluation and rollout utilities for one Demo H policy."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import pickle
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 
 from demo_a.train_fetch import FetchV2, RawKeyVmapWrapper
-from demo_g.metrics import GAIT_FIELDS, gait_distance, gait_statistics
-from demo_h.config import COMMAND_HORIZON_SECONDS, OUT, TARGET_SPEED_FETCH
-from demo_h.dataset.contract import DEFAULT_ROOT
-from demo_h.dataset.loader import load_split
-from demo_h.env import DemoHFetchRun
-from demo_h.interfaces import (
-    BASE_OBS_DIM,
+from demo_f.artifacts import sha256
+from demo_f.features import SL
+from demo_f.metrics import (
+    GAIT_CLIP_FRAMES,
+    GAIT_FIELDS,
+    gait_distance,
+    gait_statistics,
+)
+from demo_h.artifacts import load_policy_checkpoint
+from demo_h.config import (
+    ACTION_DIM,
+    BUFFER_FRAMES,
+    COMMAND_HORIZON_SECONDS,
     COMMAND_SLICE,
     FEATURE_BUFFER_SLICE,
     FEATURE_DIM,
+    OBS_DIM,
+    OUT,
+    TARGET_SPEED_FETCH,
 )
+from demo_h.dataset.contract import DEFAULT_ROOT
+from demo_h.dataset.loader import load_split
+from demo_h.env import DemoHFetchRun
 from demo_h.policy import (
     compute_plans,
     diagonal_gaussian_kl,
@@ -38,19 +47,6 @@ from demo_h.wrappers import BatchedPlanWrapper
 
 
 EVAL_SEEDS = (101, 211, 307, 401, 503)
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def load_params(path: Path):
-    with Path(path).open("rb") as stream:
-        return pickle.load(stream)
 
 
 def reference_summary(dataset_root: Path) -> dict:
@@ -108,36 +104,21 @@ def _set_target_speeds(environment, prior, state, target_speeds):
 
 
 def make_actor(arm: str, checkpoint: Path, prior):
-    params = load_params(checkpoint)
-    if arm == "h0":
-        network = ppo_networks.make_ppo_networks(
-            BASE_OBS_DIM,
-            10,
-            preprocess_observations_fn=running_statistics.normalize,
-        )
-        inference = ppo_networks.make_inference_fn(network)(
-            params, deterministic=True
-        )
+    if arm not in {"h1", "h2"}:
+        raise ValueError("Demo H evaluates h1 or h2; use Demo A as the scratch baseline")
+    params, _ = load_policy_checkpoint(
+        checkpoint,
+        expected_arm=arm,
+        expected_prior_sha256=prior.artifact_sha256,
+    )
+    network = make_residual_ppo_networks((OBS_DIM,), ACTION_DIM, prior=prior)
+    inference = ppo_networks.make_inference_fn(network)(params, deterministic=True)
 
-        def action(observation, key):
-            return inference(observation[..., :BASE_OBS_DIM], key)[0]
+    def action(observation, key):
+        return inference(observation, key)[0]
 
-        def parameters(observation):
-            return network.policy_network.apply(
-                params[0], params[1], observation[..., :BASE_OBS_DIM]
-            )
-
-    else:
-        network = make_residual_ppo_networks((1094,), 10, prior=prior)
-        inference = ppo_networks.make_inference_fn(network)(
-            params, deterministic=True
-        )
-
-        def action(observation, key):
-            return inference(observation, key)[0]
-
-        def parameters(observation):
-            return network.policy_network.apply(params[0], params[1], observation)
+    def parameters(observation):
+        return network.policy_network.apply(params[0], params[1], observation)
 
     return action, parameters
 
@@ -172,7 +153,7 @@ def rollout_arm(
             action = action_fn(state.obs, action_key)
             next_state = environment.step(state, action)
             feature = next_state.obs[..., FEATURE_BUFFER_SLICE].reshape(
-                (len(seeds), 16, FEATURE_DIM)
+                (len(seeds), BUFFER_FRAMES, FEATURE_DIM)
             )[:, -1]
             output = (
                 next_state.reward,
@@ -215,9 +196,11 @@ def summarize(stream, seeds, steps, target_speed=TARGET_SPEED_FETCH):
             ((True,), np.cumprod(~terminal[:-1]).astype(bool))
         )
         living_features = feature[alive_before, episode_index]
-        complete = len(living_features) // 64
+        complete = len(living_features) // GAIT_CLIP_FRAMES
         if complete:
-            clips = living_features[: complete * 64].reshape(complete, 64, 60)
+            clips = living_features[: complete * GAIT_CLIP_FRAMES].reshape(
+                complete, GAIT_CLIP_FRAMES, FEATURE_DIM
+            )
             gait = gait_statistics(clips)
             gait_values = {
                 f"gait_{name}": float(np.mean(values))
@@ -290,7 +273,7 @@ def save_trace(output: Path, initial, stream, batch_index: int = 0):
         qp_vel=qps.vel[:, batch_index],
         qp_ang=qps.ang[:, batch_index],
         controls=action[:, batch_index],
-        contacts=feature[:, batch_index, 56:60].astype(np.uint8),
+        contacts=feature[:, batch_index, slice(*SL["contacts"])].astype(np.uint8),
         speed=speed[:, batch_index],
         upright=upright[:, batch_index],
         reference_kl=kl[:, batch_index],
@@ -300,65 +283,49 @@ def save_trace(output: Path, initial, stream, batch_index: int = 0):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--h0", type=Path, required=True)
-    parser.add_argument("--h1", type=Path, required=True)
-    parser.add_argument("--h2", type=Path, required=True)
+    parser.add_argument("--arm", choices=("h1", "h2"), default="h2")
+    parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--prior", type=Path, default=DEFAULT_PRIOR)
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--seeds", type=int, nargs="+", default=EVAL_SEEDS)
-    parser.add_argument("--output", type=Path, default=OUT / "evaluation.json")
+    parser.add_argument("--output", type=Path, default=OUT / "policy_evaluation.json")
     args = parser.parse_args()
     prior = load_prior(args.prior)
     reference = reference_summary(args.dataset_root)
-    arms = {}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    for arm, checkpoint in (("h0", args.h0), ("h1", args.h1), ("h2", args.h2)):
-        environment, initial, stream = rollout_arm(
-            arm, checkpoint, prior, tuple(args.seeds), args.steps
-        )
-        episodes = summarize(stream, tuple(args.seeds), args.steps)
-        for episode in episodes:
-            episode["metrics"]["gait_reference_distance"] = gait_distance(
-                episode["metrics"], reference
-            )
-        arms[arm] = {
-            "checkpoint": str(checkpoint),
-            "checkpoint_sha256": sha256(checkpoint),
-            "aggregate": aggregate(episodes),
-            "episodes": episodes,
-        }
-        save_trace(args.output.parent / f"{arm}_trace.npz", initial, stream)
-        print(f"evaluated {arm}: {json.dumps(arms[arm]['aggregate'])}", flush=True)
-
-    h0, h1, h2 = (arms[name]["aggregate"] for name in ("h0", "h1", "h2"))
-    comparison = {
-        "h1_task_return_vs_h0": h1["task_return"]["mean"] - h0["task_return"]["mean"],
-        "h2_task_retention_vs_h0": h2["task_return"]["mean"]
-        / max(h0["task_return"]["mean"], 1e-8),
-        "h2_task_retention_vs_h1": h2["task_return"]["mean"]
-        / max(h1["task_return"]["mean"], 1e-8),
-        "h2_kl_reduction_vs_h1": h1["reference_kl_per_dimension"]["mean"]
-        - h2["reference_kl_per_dimension"]["mean"],
-        "h2_gait_distance_reduction_vs_h1": h1["gait_reference_distance"]["mean"]
-        - h2["gait_reference_distance"]["mean"],
-    }
-    comparison["passes_single_seed_task_kl_gate"] = bool(
-        comparison["h2_task_retention_vs_h0"] >= 0.95
-        and comparison["h2_kl_reduction_vs_h1"] > 0
+    _, initial, stream = rollout_arm(
+        args.arm,
+        args.checkpoint,
+        prior,
+        tuple(args.seeds),
+        args.steps,
     )
+    episodes = summarize(stream, tuple(args.seeds), args.steps)
+    for episode in episodes:
+        episode["metrics"]["gait_reference_distance"] = gait_distance(
+            episode["metrics"], reference
+        )
+    summary = aggregate(episodes)
+    save_trace(args.output.parent / f"{args.arm}_trace.npz", initial, stream)
     report = {
-        "schema": "demo-h-evaluation-v1",
+        "schema": "demo-h-policy-evaluation-v2",
+        "arm": args.arm,
+        "checkpoint": str(args.checkpoint),
+        "checkpoint_sha256": sha256(args.checkpoint),
+        "prior": str(args.prior),
         "evaluation_seeds": args.seeds,
         "episode_steps": args.steps,
         "shaping_disabled": True,
         "test_gait_reference": reference,
-        "arms": arms,
-        "comparison": comparison,
-        "claim_boundary": "One training seed; three matched training seeds are required for an algorithm-level claim.",
+        "aggregate": summary,
+        "episodes": episodes,
+        "claim_boundary": (
+            "Evaluate matched H1/H2 runs separately; Demo A is the scratch baseline."
+        ),
     }
     args.output.write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(comparison, indent=2))
+    print(json.dumps(summary, indent=2))
     print(f"wrote {args.output}")
 
 

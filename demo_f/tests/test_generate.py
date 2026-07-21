@@ -1,7 +1,7 @@
 import numpy as np
 
 from demo_f.features import SL
-from demo_f.generate import (
+from demo_f.prior import (
     COMMAND_HORIZON_SECONDS,
     command_scale,
     dataset_command_calibration,

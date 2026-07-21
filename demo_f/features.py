@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .config import FPS
+from .config import FEATURE_DIM, FPS
 
 
 SL = {
@@ -19,9 +19,6 @@ SL = {
     "feet_velocity": (44, 56),
     "contacts": (56, 60),
 }
-FEATURE_DIM = 60
-
-
 def _rotation_6d(matrix: np.ndarray) -> np.ndarray:
     return matrix[..., :, :2].reshape(matrix.shape[:-2] + (6,))
 
@@ -32,8 +29,15 @@ def trajectory_features(
     joint_angles: np.ndarray,
     feet_local: np.ndarray,
     contacts: np.ndarray,
+    *,
+    fps: float = FPS,
 ) -> np.ndarray:
-    """Convert ``(..., time, *)`` release arrays into 60-D causal features."""
+    """Convert trajectories into the accepted 60-D feature contract.
+
+    Version 1 forward-fills the otherwise undefined frame-zero rates from the
+    first transition.  The frozen Demo F and H artifacts were trained with
+    this convention, so changing it requires a new feature-contract version.
+    """
 
     root_position = np.asarray(root_position, np.float32)
     quaternion = np.asarray(root_quaternion, np.float32)
@@ -51,7 +55,7 @@ def trajectory_features(
         leading + (time, 3, 3)
     )
     world_velocity = np.zeros_like(root_position)
-    world_velocity[..., 1:, :] = np.diff(root_position, axis=-2) * FPS
+    world_velocity[..., 1:, :] = np.diff(root_position, axis=-2) * fps
     world_velocity[..., 0, :] = world_velocity[..., 1, :]
     local_velocity = np.einsum("...tji,...tj->...ti", rotation, world_velocity)
 
@@ -61,16 +65,16 @@ def trajectory_features(
     )
     rotvec = Rotation.from_matrix(relative.reshape(-1, 3, 3)).as_rotvec().reshape(
         leading + (time, 3)
-    ) * FPS
+    ) * fps
     # ``relative = R(t-1)^T R(t)`` is already expressed in the previous root
     # frame, so its rotation vector is the desired root-local angular velocity.
     angular_local = rotvec
 
     joint_velocity = np.zeros_like(angles)
-    joint_velocity[..., 1:, :] = np.diff(angles, axis=-2) * FPS
+    joint_velocity[..., 1:, :] = np.diff(angles, axis=-2) * fps
     joint_velocity[..., 0, :] = joint_velocity[..., 1, :]
     foot_velocity = np.zeros_like(feet)
-    foot_velocity[..., 1:, :, :] = np.diff(feet, axis=-3) * FPS
+    foot_velocity[..., 1:, :, :] = np.diff(feet, axis=-3) * fps
     foot_velocity[..., 0, :, :] = foot_velocity[..., 1, :, :]
 
     output = np.concatenate(

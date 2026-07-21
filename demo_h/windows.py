@@ -7,12 +7,13 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from demo_h.config import CLIP_FRAMES, PriorConfig
-from demo_h.dataset.commands import hindsight_command
-
-
-COMMAND_HORIZON = 31
-ACTION_PHASES = 4
+from demo_f.commands import hindsight_command
+from demo_h.config import (
+    ACTION_PHASES,
+    CLIP_FRAMES,
+    COMMAND_HORIZON_FRAMES,
+    PriorConfig,
+)
 
 
 @dataclass
@@ -29,6 +30,13 @@ class StateActionWindows:
     anchors: np.ndarray
 
 
+def command_frames(anchors: np.ndarray, config: PriorConfig) -> tuple[np.ndarray, np.ndarray]:
+    """Demo H commands begin at state t, immediately before action u[t]."""
+
+    start = np.asarray(anchors, np.int64) * config.downsample - 1
+    return start, start + COMMAND_HORIZON_FRAMES
+
+
 def state_action_windows(
     tokens: torch.Tensor,
     normalized_features: torch.Tensor,
@@ -43,7 +51,9 @@ def state_action_windows(
     The command begins at that same causal history endpoint.
     """
 
-    last_command_anchor = (CLIP_FRAMES - 1 - COMMAND_HORIZON + 1) // config.downsample
+    last_command_anchor = (
+        CLIP_FRAMES - 1 - COMMAND_HORIZON_FRAMES + 1
+    ) // config.downsample
     last_future_anchor = tokens.shape[1] - ACTION_PHASES
     anchors = np.arange(
         config.history_tokens,
@@ -56,15 +66,16 @@ def state_action_windows(
         [tokens[:, a - config.history_tokens : a] for a in anchors], dim=1
     )
     futures = torch.stack([tokens[:, a : a + ACTION_PHASES] for a in anchors], dim=1)
+    command_start, command_future = command_frames(anchors, config)
     commands = np.stack(
         [
             hindsight_command(
                 dataset.root_position,
                 dataset.root_quaternion,
-                start=int(a * config.downsample - 1),
-                future=int(a * config.downsample - 1 + COMMAND_HORIZON),
+                start=int(start),
+                future=int(future),
             )
-            for a in anchors
+            for start, future in zip(command_start, command_future, strict=True)
         ],
         axis=1,
     )

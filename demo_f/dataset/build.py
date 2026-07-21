@@ -31,7 +31,16 @@ from demo_b.strict_locomotion import (
     strict_block_starts,
 )
 
-from ..config import ANIMAL, DATA_ROOT, JOINT_LIMIT, JOINT_NAMES, RetargetConfig
+from ..artifacts import sha256
+from ..commands import commands_from_yaw
+from ..config import (
+    ANIMAL,
+    DATA_ROOT,
+    FEATURE_CONTRACT_VERSION,
+    JOINT_LIMIT,
+    JOINT_NAMES,
+    RetargetConfig,
+)
 from .contract import (
     CLIP_FRAMES,
     COMMAND_FRAME,
@@ -47,8 +56,8 @@ from .contract import (
     UPSTREAM_LICENSE,
     validate_split_contract,
 )
-from ..kinematics import fetch_feet
-from ..retarget import _world_feet, optimize_batch, prepare_source
+from ..kinematics import fetch_feet, world_feet
+from ..retarget import optimize_batch, prepare_source
 
 
 MIN_GLOBAL_PASS_RATE = 0.75
@@ -59,20 +68,13 @@ QUALITY_GATES = {
 }
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def code_hashes() -> dict[str, str]:
     """Hash every source file that can change a released trajectory or split."""
 
     repository = Path(__file__).resolve().parents[2]
     paths = {
         "demo_b/strict_locomotion.py": repository / "demo_b" / "strict_locomotion.py",
+        "demo_f/commands.py": repository / "demo_f" / "commands.py",
         "demo_f/config.py": repository / "demo_f" / "config.py",
         "demo_f/dataset/build.py": Path(__file__).resolve(),
         "demo_f/dataset/contract.py": Path(__file__).with_name("contract.py"),
@@ -112,23 +114,6 @@ def git_state() -> dict[str, str | bool | None]:
     }
 
 
-def hindsight_command(root_position: np.ndarray, yaw: np.ndarray) -> np.ndarray:
-    delta = root_position[:, COMMAND_FUTURE_FRAME, :2] - root_position[:, COMMAND_FRAME, :2]
-    heading = yaw[:, COMMAND_FRAME]
-    cosine, sine = np.cos(-heading), np.sin(-heading)
-    turn = (
-        yaw[:, COMMAND_FUTURE_FRAME] - yaw[:, COMMAND_FRAME] + np.pi
-    ) % (2 * np.pi) - np.pi
-    return np.stack(
-        (
-            cosine * delta[:, 0] - sine * delta[:, 1],
-            sine * delta[:, 0] + cosine * delta[:, 1],
-            turn,
-        ),
-        axis=-1,
-    ).astype(np.float32)
-
-
 def batch_quality(sources: list[dict], angles: np.ndarray) -> dict[str, np.ndarray]:
     actual = np.asarray(fetch_feet(jnp.asarray(angles)), dtype=np.float32)
     target = np.stack([source["target_feet_local"] for source in sources])
@@ -137,7 +122,7 @@ def batch_quality(sources: list[dict], angles: np.ndarray) -> dict[str, np.ndarr
     contact = np.stack([source["contacts"] for source in sources])
     error = actual - target
     world = np.stack(
-        [_world_feet(root[index], yaw[index], actual[index]) for index in range(len(sources))]
+        [world_feet(root[index], yaw[index], actual[index]) for index in range(len(sources))]
     )
     speed = np.zeros(world.shape[:3], np.float32)
     speed[:, 1:] = np.linalg.norm(np.diff(world, axis=1), axis=-1) * FPS
@@ -280,7 +265,12 @@ def build_session(
     source_path_speed = np.asarray(
         [source["source_path_speed"] for source in sources], np.float32
     )
-    command = hindsight_command(roots, yaws)
+    command = commands_from_yaw(
+        roots,
+        yaws,
+        np.asarray([COMMAND_FRAME]),
+        np.asarray([COMMAND_FUTURE_FRAME]),
+    )[:, 0]
     feet = quality.pop("feet_local")
     arrays = {
         "joint_angles": angles[keep],
@@ -358,6 +348,19 @@ def main():
         if args.overwrite and args.resume:
             raise SystemExit("choose only one of --overwrite and --resume")
         if args.overwrite:
+            repository = Path(__file__).resolve().parents[2]
+            forbidden = {Path("/").resolve(), Path.home().resolve(), repository, repository / "demo_f"}
+            if output in forbidden:
+                raise SystemExit(f"refusing broad overwrite target {output}")
+            manifest_path = output / "manifest.json"
+            if not manifest_path.is_file():
+                raise SystemExit(
+                    f"refusing to delete unrecognized directory {output}; "
+                    "an existing Demo F manifest is required"
+                )
+            existing = json.loads(manifest_path.read_text())
+            if existing.get("repository_id") != REPOSITORY_ID:
+                raise SystemExit(f"refusing to delete non-Demo-F release {output}")
             shutil.rmtree(output)
         elif not args.resume:
             raise SystemExit(
@@ -396,6 +399,7 @@ def main():
     transformation_hashes = code_hashes()
     manifest = {
         "schema_version": SCHEMA_VERSION,
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "repository_id": REPOSITORY_ID,
         "complete_release": complete_release,
         "created_utc": datetime.now(timezone.utc).isoformat(),

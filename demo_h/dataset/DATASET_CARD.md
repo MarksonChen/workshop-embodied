@@ -38,8 +38,10 @@ interpreted as biological torque.
   `c02c0cc43775dc28ee33106b4841f7dc7a06696c20e956e7d21aeb36dfd76847`.
 
 Session-level train/validation/test assignments are inherited unchanged from
-Demo F. Independent paired-control replay reproduces the stored state to about
-`1e-5`, while shuffled controls are materially worse.
+Demo F. Independent paired-control replay on the same H100/CUDA backend
+reproduces the stored state to about `1e-5`, while shuffled controls are
+materially worse. CPU replay is not an exact-integrity check for Brax's legacy
+contact-rich PBD trajectory and is rejected explicitly.
 
 See `manifest.json` in a built release for shard hashes, package versions, the
 exact Fetch-config hash, gains, rejection gates, actuator ordering, and

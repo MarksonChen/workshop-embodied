@@ -18,7 +18,6 @@ Run from the repository root:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 from datetime import datetime, timezone
@@ -28,17 +27,21 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..config import FETCH_TRUNK_LENGTH, FPS, JOINT_LIMIT
-from ..kinematics import fetch_feet
-from ..retarget import _world_feet
+from ..artifacts import guard_derived_release_output, sha256
+from ..commands import hindsight_commands
+from ..config import FEATURE_CONTRACT_VERSION, FETCH_TRUNK_LENGTH, FPS, JOINT_LIMIT
+from ..kinematics import fetch_feet, world_feet
 from .contract import (
     CLIP_FRAMES,
     COMMAND_FRAME,
     COMMAND_FUTURE_FRAME,
     DEFAULT_ROOT,
     DYNAMIC_ROOT,
+    FIELDS,
+    REPOSITORY_ID,
+    SCHEMA_VERSION,
 )
-from .loader import hindsight_commands, load_manifest
+from .loader import load_manifest
 
 
 # Median source trunk length across the four frozen inspection clips is about
@@ -65,14 +68,6 @@ DYNAMIC_MINIMUM_GLOBAL_PASS_RATE = 0.80
 # dispatching the dozens of primitive operations in ``fetch_feet`` separately
 # for each of the ~12k crops in the complete release.
 _fetch_feet_sequence = jax.jit(fetch_feet)
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def retimed_length(
@@ -164,7 +159,7 @@ def retime_clip(
 
 def _quality(root, quaternion, feet, contacts, angles) -> tuple[float, float, float]:
     yaw = _yaw(quaternion)
-    world = _world_feet(root, yaw, feet)
+    world = world_feet(root, yaw, feet)
     speed = np.zeros(world.shape[:2], np.float32)
     speed[1:] = np.linalg.norm(np.diff(world, axis=0), axis=-1) * FPS
     stance = contacts[1:].astype(bool) & contacts[:-1].astype(bool)
@@ -184,7 +179,7 @@ def retime_shard(
 ) -> dict[str, np.ndarray]:
     """Derive disjoint physical-time crops for every parent trajectory."""
 
-    rows = {name: [] for name in parent}
+    rows = {name: [] for name in FIELDS}
     starts = crop_starts(time_scale=time_scale, crops_per_parent=crops_per_parent)
     for parent_index in range(len(parent["joint_angles"])):
         for target_start in starts:
@@ -251,8 +246,26 @@ def build(
     time_scale: float = TIME_SCALE,
     crops_per_parent: int = CROPS_PER_PARENT,
     variant: str = "dynamic-similarity-v2",
+    overwrite: bool = False,
 ) -> dict:
     parent_root, output_root = Path(parent_root), Path(output_root)
+    if output_root.resolve() == DYNAMIC_ROOT.resolve() and (
+        not np.isclose(time_scale, TIME_SCALE)
+        or crops_per_parent != CROPS_PER_PARENT
+        or variant != "dynamic-similarity-v2"
+    ):
+        raise ValueError(
+            "non-canonical retiming parameters require a distinct --output-root"
+        )
+    parent_root, output_root = guard_derived_release_output(
+        parent_root,
+        output_root,
+        overwrite=overwrite,
+        expected_manifest={
+            "schema_version": SCHEMA_VERSION,
+            "repository_id": REPOSITORY_ID,
+        },
+    )
     parent_manifest_path = parent_root / "manifest.json"
     parent_manifest = load_manifest(parent_root)
     sessions, counts = [], {split: 0 for split in parent_manifest["splits"]}
@@ -348,6 +361,7 @@ def build(
         **parent_manifest,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "variant": variant,
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "counts": counts,
         "sessions": sessions,
         "global_pass_rate": sum(counts.values()) / candidate_total,
@@ -359,6 +373,10 @@ def build(
             "parent_repository_id": parent_manifest["repository_id"],
             "script": "demo_f/dataset/retime.py",
             "script_sha256": sha256(Path(__file__)),
+            "shared_code_sha256": {
+                "demo_f/commands.py": sha256(Path(__file__).parents[1] / "commands.py"),
+                "demo_f/kinematics.py": sha256(Path(__file__).parents[1] / "kinematics.py"),
+            },
             "continuity": "each output crop comes from exactly one contiguous parent clip",
         },
     }
@@ -381,6 +399,7 @@ def main() -> None:
     parser.add_argument("--time-scale", type=float, default=TIME_SCALE)
     parser.add_argument("--crops-per-parent", type=int, default=CROPS_PER_PARENT)
     parser.add_argument("--variant", default="dynamic-similarity-v2")
+    parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     manifest = build(
         args.parent_root,
@@ -388,6 +407,7 @@ def main() -> None:
         time_scale=args.time_scale,
         crops_per_parent=args.crops_per_parent,
         variant=args.variant,
+        overwrite=args.overwrite,
     )
     print(
         json.dumps(

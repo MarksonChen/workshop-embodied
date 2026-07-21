@@ -1,6 +1,6 @@
 import numpy as np
 
-from demo_g.metrics import GAIT_CLIP_FRAMES, GAIT_FIELDS, gait_distance, gait_statistics
+from demo_f.metrics import GAIT_CLIP_FRAMES, GAIT_FIELDS, gait_distance, gait_statistics
 
 
 def test_gait_statistics_are_finite_and_reference_distance_is_zero():

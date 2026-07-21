@@ -10,27 +10,33 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 
+from demo_f.artifacts import sha256
+from demo_f.commands import hindsight_command
+from demo_f.config import FEATURE_CONTRACT_VERSION
 from demo_f.windows import encode_in_batches
-from demo_h.config import OUT
-from demo_h.dataset.commands import hindsight_command
+from demo_h.config import BUFFER_FRAMES, OUT, PHASE_DIM
 from demo_h.dataset.contract import DEFAULT_ROOT
 from demo_h.dataset.loader import load_split
 from demo_h.evaluate_prior import DEVICE, load_models
 from demo_h.prior import load_prior
-from demo_h.train_prior import sha256
 
 
 @torch.inference_mode()
 def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dict:
     checkpoint, config, tokenizer, predictor, decoder = load_models(checkpoint_path)
+    config.validate_online_contract()
     metadata = {
         "schema": "demo-h-jax-prior-v1",
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "source_checkpoint": str(checkpoint_path),
         "source_checkpoint_sha256": sha256(checkpoint_path),
         "dataset_manifest_sha256": checkpoint["dataset_manifest_sha256"],
         "dataset_variant": checkpoint["dataset_variant"],
         "config": checkpoint["config"],
-        "temporal_contract": "16 raw frames -> 4 history tokens -> one next-token plan; one control per frame",
+        "temporal_contract": (
+            f"{BUFFER_FRAMES} raw frames -> {config.history_tokens} history tokens "
+            "-> one next-token plan; one normalized control per frame"
+        ),
     }
     arrays = {
         "metadata_json": np.asarray(json.dumps(metadata, sort_keys=True)),
@@ -69,7 +75,7 @@ def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dic
     # One honest anchor-4 example checks the convolution, Transformer, action
     # MLP, normalization, phase, and previous-action alignment together.
     validation = load_split("validation", dataset_root)
-    raw_features = validation.features[0, :16]
+    raw_features = validation.features[0, :BUFFER_FRAMES]
     command = hindsight_command(
         validation.root_position[:1],
         validation.root_quaternion[:1],
@@ -93,15 +99,21 @@ def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dic
     torch_mean = decoder(
         normalized[0, -1],
         torch_plan,
-        torch.as_tensor(validation.controls[0, 14], device=DEVICE),
-        torch.eye(4, device=DEVICE)[0],
+        torch.as_tensor(validation.normalized_control[0, 14], device=DEVICE),
+        torch.eye(PHASE_DIM, device=DEVICE)[0],
         command_normalized[0],
     )
     prior = load_prior(output)
-    jax_mean, _, jax_plan = prior.infer(
-        jnp.asarray(raw_features),
-        jnp.asarray(validation.controls[0, 14]),
-        jnp.eye(4)[0],
+    jax_features = jnp.asarray(raw_features)
+    jax_history = prior.encode(jax_features)
+    jax_plan = prior.predict_plan(
+        jax_history[-config.history_tokens :], jnp.asarray(command)
+    )
+    jax_mean = prior.action_mean(
+        jax_features[-1],
+        jax_plan,
+        jnp.asarray(validation.normalized_control[0, 14]),
+        jnp.eye(PHASE_DIM)[0],
         jnp.asarray(command),
     )
     plan_error = float(

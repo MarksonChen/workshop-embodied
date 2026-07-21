@@ -21,6 +21,8 @@ from PIL import Image, ImageDraw, ImageFont
 from pytinyrenderer import TinyRenderCamera as Camera
 from pytinyrenderer import TinyRenderLight as Light
 
+from demo_h.config import FPS
+
 
 def _font(size: int):
     path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
@@ -119,57 +121,49 @@ class _ReusableRenderer:
         )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("metrics", type=Path, nargs="+")
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--panel-size", type=int, default=288)
-    parser.add_argument("--columns", type=int, default=3)
-    parser.add_argument(
-        "--frame-stride",
-        type=int,
-        default=2,
-        help="Render every Nth 50 Hz physics frame and preserve playback time.",
-    )
-    parser.add_argument(
-        "--render-workers",
-        type=int,
-        default=0,
-        help="Independent panel render threads; 0 chooses a bounded default.",
-    )
-    args = parser.parse_args()
-    if args.frame_stride < 1:
-        parser.error("--frame-stride must be positive")
-    if args.render_workers < 0:
-        parser.error("--render-workers cannot be negative")
+def render_sweeps(
+    metrics_paths,
+    output: Path,
+    *,
+    panel_size: int = 288,
+    columns: int = 3,
+    frame_stride: int = 2,
+    render_workers: int = 0,
+) -> None:
+    """Render one or more compatible sweep reports into a tiled MP4."""
 
+    if frame_stride < 1 or render_workers < 0 or columns < 1:
+        raise ValueError("stride/columns must be positive and workers non-negative")
     started = time.perf_counter()
     rows = []
-    for metrics_path in args.metrics:
+    for metrics_path in map(Path, metrics_paths):
         report = json.loads(metrics_path.read_text())
         for source_row in report["speeds"]:
             row = dict(source_row)
             row["group_label"] = report.get("label", report["arm"])
             rows.append(row)
+    if not rows:
+        raise ValueError("sweep reports contain no trajectories")
     env = fetch.Fetch()
     trajectories = [_load_qps(env, Path(row["trace"])) for row in rows]
     frame_count = min(map(len, trajectories))
-    columns = min(args.columns, len(rows))
+    columns = min(columns, len(rows))
     rows_count = math.ceil(len(rows) / columns)
-    font = _font(max(11, args.panel_size // 22))
-    args.output.parent.mkdir(parents=True, exist_ok=True)
+    font = _font(max(11, panel_size // 22))
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
     renderers = [
-        _ReusableRenderer(env.sys, trajectory[0], args.panel_size, args.panel_size)
+        _ReusableRenderer(env.sys, trajectory[0], panel_size, panel_size)
         for trajectory in trajectories
     ]
-    worker_count = args.render_workers or min(
+    worker_count = render_workers or min(
         len(renderers), max(1, os.cpu_count() or 1), 12
     )
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor, imageio.get_writer(
-        args.output, fps=50 / args.frame_stride, quality=8
+        output, fps=FPS / frame_stride, quality=8
     ) as writer:
-        for frame_index in range(0, frame_count, args.frame_stride):
+        for frame_index in range(0, frame_count, frame_stride):
             rendered_frames = list(
                 executor.map(
                     lambda pair: pair[0].render(pair[1][frame_index]),
@@ -178,13 +172,18 @@ def main() -> None:
             )
             panels = []
             for row, rendered in zip(rows, rendered_frames):
-                command = row["commanded_speed_mps"]
-                actual = row["realized_speed_mean_mps"]
+                command = row.get(
+                    "commanded_speed_fetch_units_per_s", row.get("commanded_speed_mps")
+                )
+                actual = row.get(
+                    "realized_speed_mean_fetch_units_per_s",
+                    row.get("realized_speed_mean_mps"),
+                )
                 passed = row["four_limb_stride"]["passes_four_limb_stride_gate"]
                 panels.append(
                     _label(
                         rendered,
-                        (f"{row['group_label']} | command {command:.1f} m/s",
+                        (f"{row['group_label']} | command {command:.1f} Fetch units/s",
                          f"actual {actual:.2f} | "
                          f"four-limb stride: {'PASS' if passed else 'FAIL'}"),
                         font,
@@ -203,10 +202,29 @@ def main() -> None:
             )
             writer.append_data(tiled)
     print(
-        f"wrote {args.output} in {time.perf_counter() - started:.1f}s "
-        f"({len(range(0, frame_count, args.frame_stride))} frames, "
+        f"wrote {output} in {time.perf_counter() - started:.1f}s "
+        f"({len(range(0, frame_count, frame_stride))} frames, "
         f"{worker_count} render workers)",
         flush=True,
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("metrics", type=Path, nargs="+")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--panel-size", type=int, default=288)
+    parser.add_argument("--columns", type=int, default=3)
+    parser.add_argument("--frame-stride", type=int, default=2)
+    parser.add_argument("--render-workers", type=int, default=0)
+    args = parser.parse_args()
+    render_sweeps(
+        args.metrics,
+        args.output,
+        panel_size=args.panel_size,
+        columns=args.columns,
+        frame_stride=args.frame_stride,
+        render_workers=args.render_workers,
     )
 
 

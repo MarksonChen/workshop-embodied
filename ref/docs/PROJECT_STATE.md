@@ -29,6 +29,41 @@ from here without re-deriving anything.
 > stance rather than locomotion and must not be presented as the workshop
 > result.
 
+### Current Demo F/H implementation contract
+
+- Shared data-prior code lives in `demo_f.commands`, `features`,
+  `jax_features`, `jax_models`, `metrics`, `losses`, `prior`, `artifacts`, and
+  `api`; Demo H imports it instead of carrying copies.
+- Demo F stores physical root motion in Fetch units, but its workshop command
+  and tracking reports convert back to source-equivalent m/s through the
+  declared calibration. Retained `source_*_mps` fields are biological metadata.
+- Demo F's first command anchor is frames 16→47. Demo H's is 15→46 because
+  normalized control `u[15]` produces state `x[16]`; this is an intentional
+  one-frame causal shift.
+- Feature contract v1 preserves the accepted frame-zero forward fill. Demo H's
+  separately versioned online observation contract preserves Fetch-native
+  contact bits; changing either requires new trained artifacts.
+- Demo H actions are normalized controls in `[-1,1]^10`.
+  `requested_actuator_torque=-300u` is recorded before joint-limit gating and
+  is not biological or guaranteed applied torque.
+- `demo_h.config` owns the single 1,094-D online observation layout. The live
+  arms are H1 (same frozen prior and bounded residual adapter, `beta=0`) and H2
+  (same pair plus accepted `beta=0.10` KL); use Demo A as the scratch baseline.
+  The old H0/three-arm evaluator is no longer a supported path.
+- State likelihood is exposed as `DemoHPrior.state_log_prob`; offline bounded
+  action likelihood is `action_tanh_nll_per_dimension` and includes the tanh
+  Jacobian. `train_prior` always trains from scratch.
+- `python -m demo_h.visualize` is the sole speed-sweep entry point.
+  `render_speed_comparison.render_sweeps` remains callable, and gait metrics
+  are validation-only.
+- New PPO checkpoints bind the H1/H2 arm, observation/action contract, and
+  exact prior hash in one envelope. The accepted legacy β=.10 artifact is
+  loadable only with its verified JSON sidecar.
+- Brax projection, physics evaluation, PPO, rollout, and rendering require an
+  isolated Brax 0.12.3/JAX 0.4.30 subprocess or separate kernel; the main
+  workshop kernel cannot safely host that pinned stack. Exact dataset replay
+  additionally requires the same CUDA backend as projection.
+
 ---
 
 ## 1. Goal
