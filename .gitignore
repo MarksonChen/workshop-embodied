@@ -49,9 +49,16 @@ demo_e/out/
 demo_f/out/
 demo_f/dataset/release/
 demo_f/dataset/release_dynamic/
+demo_f/dataset/release_retime_1p75/
 
 # Demo G checkpoints, evaluation reports, plots, and videos
 demo_g/out/
+
+# Demo H physics-projected data, checkpoints, reports, plots, and videos
+demo_h/out/
+demo_h/dataset/release/
+demo_h/dataset/release_direct/
+demo_h/dataset/release_retime_1p75/
 
 # Demo A run artifacts
 demo_a/runs/

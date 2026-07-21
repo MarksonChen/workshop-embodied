@@ -2,12 +2,13 @@
 
 _Revised and implemented 2026-07-19. Companion to
 [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md), the completed `demo_a/` and `demo_b/`, and
-[dataset.md](dataset.md). This supersedes the research-oriented proposal in
-[demo_c_prev.md](demo_c_prev.md)._
+[dataset.md](dataset.md)._
 
 > **Presentation status.** Retained as an implemented research reference. The
-> core workshop now presents Demos A, B, F, and planned G; see
-> [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) and [demo_g.md](demo_g.md).
+> accepted core workshop presents Demos A, B, F, and H; see
+> [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md) and [demo_h.md](demo_h.md). The earlier,
+> more research-oriented Demo C proposal is preserved in
+> [`archive/demo_c_prev.md`](../../archive/demo_c_prev.md).
 
 ## 1. The pedagogical contract
 
@@ -39,15 +40,32 @@ backpropagate through the world model.
 
 ## 2. What “WAM” means here
 
-Sections 3 and 4.1 of [WorldModel.pdf](../papers/WorldModel.pdf) motivate joining a
-controllable world factor with an action/policy factor and using the learned world for
-policy optimization. Demo C implements the smallest explicit factorization:
+Demo C implements the paradigm of **Section 4.1 of
+[WorldModel.pdf](../papers/WorldModel.pdf), “World Model for Reinforcement Learning”**: a
+policy is optimized *inside* a frozen learned world used as a simulator, improving from
+imagined rollouts by maximizing expected return (survey eqs 16–18) rather than regressing
+actions from data. It is the survey's *first-level* variant — the world model stays frozen
+instead of being co-evolved with the policy — so the closest published point of reference
+is a frozen-simulator method such as DiWA, not the second-level world-model/policy
+co-training loop (World-VLA-Loop, WoVR).
+
+The factorization only borrows its *vocabulary* from Section 3.1's joint predictive-control
+distribution and its marginals. Demo C implements the smallest explicit factorization:
 
 ```text
 p(z_{t+1:t+8}, a_t | z_{t-7:t}, g_t)
-  = πθ(a_t | g_t, body_t, [context_t])
-    pφ(z_{t+1:t+8} | z_{t-7:t}, a_t)
+  = πθ(a_t | g_t, body_t, [context_t])    # policy model             (survey eq 5)
+    pφ(z_{t+1:t+8} | z_{t-7:t}, a_t)       # controllable world model (survey eq 7)
 ```
+
+This is deliberately a **policy × controllable-world-model** pair, *not* an
+inverse-dynamics policy (the survey's Section 3.2, eq 8): PPO never regresses the action
+that connects two observed latents, it maximizes food-reaching reward through imagined
+transitions. The one Section 3.2 flavor is the optional `context_t` term — feeding the
+frozen predictive latent into the policy input is the VPP/Video2Act style of
+predictive-feature conditioning — but it rides on top of the RL loop, and the goal-only
+versus WAM ablation in §4.4 exists precisely to test whether that conditioning changes the
+result.
 
 This is a **pedagogical state-space analogue**, not a claim to reproduce a unified
 video-action transformer, mixture-of-experts backbone, or current WAM state of the art.
@@ -134,6 +152,11 @@ skill = 1 - MSE(world prediction) / MSE(repeat last latent)
 It passed all four untouched sessions, with session-balanced mean skill +39.5%.
 
 ### 4.2 Dream transition
+
+This transition is the learned simulator of the survey's Section 4.1: the frozen predictor
+supplies the imagined state transition (survey eq 16) and PPO improves purely from these
+imagined rollouts. Reward and termination are the known analytic signals of §4.3 rather
+than a learned reward head — the survey treats these as optional additions to the simulator.
 
 One transition predicts 0.64 s of motion. The model decodes the old history plus the
 predicted future. Local root velocity and orientation deltas are integrated to update

@@ -1,31 +1,30 @@
 # Embodied — Project State & Next Steps
 
-_Last updated: 2026-07-20_
+_Last updated: 2026-07-21_
 
 A working log of the neuromechanical rodent-control project: what it is, what's
 built, what's proven, what's uncertain, and what to do next. Written as a handoff
 document — someone (or some agent) picking this up should be able to continue
 from here without re-deriving anything.
 
-> **Workshop overlay (updated 2026-07-20).** Sections 1–8 below preserve the
+> **Workshop overlay (updated 2026-07-21).** Sections 1–8 below preserve the
 > original `rl/` joystick-project history. The current live presentation is now
 > Demo A (Fetch PPO), Demo B (conditional rodent motion), Demo F (the same SSL
-> construction after contact-aware retargeting to Fetch), and Demo G (paired
-> task-only versus task-plus-frozen-prior Fetch PPO). See
+> construction after contact-aware retargeting to Fetch), and Demo H
+> (generative body/action pretraining followed by residual PPO with a frozen
+> reference KL). See
 > [WORKSHOP_PLAN.md](WORKSHOP_PLAN.md), [demo_a.md](demo_a.md),
-> [demo_b.md](demo_b.md), [demo_f.md](demo_f.md), and [demo_g.md](demo_g.md).
-> Demo F now has a dynamically scaled v2 release: the 21.3789x spatial
-> enlargement is paired with a 4.6237x Froude time dilation, so 0.20 m/s rodent
-> motion maps to 0.924747 Fetch units/s. Its small closed-loop prior trains in
-> 51.4 seconds and passes every validation/final-test rollout, likelihood, and
-> joint-limit gate. Demo G uses that same target and is evaluated over three
-> matched training seeds. Each 30M arm finishes in 58–70 seconds inside
-> `ppo.train`; raw held-out likelihood improves in all 15 paired rollouts, while
-> tracking and survival are retained. Airborne fraction, stance-foot speed,
-> approximate world-foot slip, and joint-speed RMS improve toward held-out
-> motion in 3/3 seeds, but the complete gait composite improves in only 2/3 and
-> cyclicity in 0/3. Seed 0 is the best presentation checkpoint; preserve seed
-> 2 as a robustness failure. Demos C, D, and E remain research references. In
+> [demo_b.md](demo_b.md), [demo_f.md](demo_f.md), and [demo_h.md](demo_h.md).
+> Demo H uses an explicitly separate `1.75x` empirical retiming of Demo F data,
+> exact-physics action projection, a learned state/action prior, and a 30M-step
+> PPO post-training run. The accepted single-seed checkpoint uses `beta=0.10`,
+> survives every 5-second evaluation at commands 1.5–4.0, and has mean speed
+> MAE 0.0790; strict stride validation passes 4/6 speeds. The complete local
+> physical-build + prior + PPO path takes about 250 seconds. This is a
+> pedagogical result, not an algorithm-level claim: the nearby `beta=0.075`
+> run passes 5/6 stride gates, and naturalness metrics remain validation-only.
+> Demo G is retained as an optional, three-seed reward-side contrast. Demos C,
+> D, and E remain research references. In
 > particular, Demo E's ten-minute full-skeletal-rodent run learned an upright
 > stance rather than locomotion and must not be presented as the workshop
 > result.
@@ -73,6 +72,7 @@ embodied/
 ├── demo_e/               frozen-motion-likelihood + paired RodentJoystick PPO
 ├── demo_f/               retargeted Coltrane-to-Fetch dataset and SSL prior
 ├── demo_g/               same-body Fetch task-only/task+prior PPO (complete, limited claim)
+├── demo_h/               accepted body/action pretraining + residual PPO capstone
 ├── rl/                   OUR code (see Section 3)
 │   ├── check_compat.py       proprioception-compatibility check (277 == 277)
 │   ├── run_imitation.py      roll out + render the published imitation policy

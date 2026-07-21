@@ -75,19 +75,35 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def retimed_length(frames: int = CLIP_FRAMES) -> int:
+def retimed_length(
+    frames: int = CLIP_FRAMES,
+    time_scale: float = TIME_SCALE,
+) -> int:
     """Number of target-time samples spanning the complete parent clip."""
 
-    return int(math.floor((frames - 1) * TIME_SCALE)) + 1
+    if time_scale < 1.0:
+        raise ValueError("time scale must not accelerate the parent motion")
+    return int(math.floor((frames - 1) * time_scale)) + 1
 
 
-def crop_starts(frames: int = CLIP_FRAMES) -> np.ndarray:
-    """Four disjoint crops spread across one independently retimed clip."""
+def crop_starts(
+    frames: int = CLIP_FRAMES,
+    time_scale: float = TIME_SCALE,
+    crops_per_parent: int = CROPS_PER_PARENT,
+) -> np.ndarray:
+    """Disjoint crops spread across one independently retimed clip."""
 
-    available = retimed_length(frames) - CLIP_FRAMES
-    starts = np.rint(np.linspace(0, available, CROPS_PER_PARENT)).astype(np.int32)
+    if crops_per_parent < 1:
+        raise ValueError("at least one crop is required")
+    available = retimed_length(frames, time_scale) - CLIP_FRAMES
+    if available < 0:
+        raise ValueError("retimed parent is shorter than one output clip")
+    if crops_per_parent == 1:
+        starts = np.asarray((int(round(available / 2)),), np.int32)
+    else:
+        starts = np.rint(np.linspace(0, available, crops_per_parent)).astype(np.int32)
     if np.any(np.diff(starts) < CLIP_FRAMES):
-        raise AssertionError("dynamic crops unexpectedly overlap")
+        raise ValueError("requested retimed crops would overlap")
     return starts
 
 
@@ -118,11 +134,12 @@ def retime_clip(
     joint_angles: np.ndarray,
     contacts: np.ndarray,
     target_start: int,
+    time_scale: float = TIME_SCALE,
 ) -> dict[str, np.ndarray]:
     """Interpolate one physical-time crop without joining parent clips."""
 
     target_frame = target_start + np.arange(CLIP_FRAMES, dtype=np.float64)
-    source_time = target_frame / TIME_SCALE
+    source_time = target_frame / time_scale
     if source_time[-1] > len(root_position) - 1 + 1e-9:
         raise ValueError("retimed crop exceeds its parent clip")
     root = _linear(root_position, source_time).astype(np.float32)
@@ -159,11 +176,16 @@ def _quality(root, quaternion, feet, contacts, angles) -> tuple[float, float, fl
     )
 
 
-def retime_shard(parent: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """Derive four physical-time crops for every parent trajectory."""
+def retime_shard(
+    parent: dict[str, np.ndarray],
+    *,
+    time_scale: float = TIME_SCALE,
+    crops_per_parent: int = CROPS_PER_PARENT,
+) -> dict[str, np.ndarray]:
+    """Derive disjoint physical-time crops for every parent trajectory."""
 
     rows = {name: [] for name in parent}
-    starts = crop_starts()
+    starts = crop_starts(time_scale=time_scale, crops_per_parent=crops_per_parent)
     for parent_index in range(len(parent["joint_angles"])):
         for target_start in starts:
             clip = retime_clip(
@@ -172,6 +194,7 @@ def retime_shard(parent: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
                 parent["joint_angles"][parent_index],
                 parent["contacts"][parent_index],
                 int(target_start),
+                time_scale,
             )
             command = hindsight_commands(
                 clip["root_position"][None],
@@ -221,7 +244,14 @@ def _read_parent(path: Path) -> dict[str, np.ndarray]:
         return {name: source[name] for name in source.files}
 
 
-def build(parent_root: Path, output_root: Path) -> dict:
+def build(
+    parent_root: Path,
+    output_root: Path,
+    *,
+    time_scale: float = TIME_SCALE,
+    crops_per_parent: int = CROPS_PER_PARENT,
+    variant: str = "dynamic-similarity-v2",
+) -> dict:
     parent_root, output_root = Path(parent_root), Path(output_root)
     parent_manifest_path = parent_root / "manifest.json"
     parent_manifest = load_manifest(parent_root)
@@ -233,7 +263,11 @@ def build(parent_root: Path, output_root: Path) -> dict:
     }
     for parent_row in parent_manifest["sessions"]:
         parent_shard = parent_root / parent_row["shard"]
-        arrays = retime_shard(_read_parent(parent_shard))
+        arrays = retime_shard(
+            _read_parent(parent_shard),
+            time_scale=time_scale,
+            crops_per_parent=crops_per_parent,
+        )
         candidate_count = len(arrays["joint_angles"])
         keep = (
             np.isfinite(arrays["contact_speed_mean"])
@@ -274,18 +308,31 @@ def build(parent_root: Path, output_root: Path) -> dict:
             }
         )
 
+    velocity_scale = LENGTH_SCALE / time_scale
+    target_speed = SOURCE_SPEED_MPS * velocity_scale
+    target_command = target_speed * COMMAND_HORIZON_SECONDS
+    is_froude_similar = math.isclose(time_scale, TIME_SCALE, rel_tol=1e-9)
     dynamic = {
-        "method": "Froude-similar temporal dilation",
+        "method": (
+            "Froude-similar temporal dilation"
+            if is_froude_similar
+            else "selected temporal dilation"
+        ),
         "reference_source_trunk_m": REFERENCE_SOURCE_TRUNK_M,
         "fetch_trunk_length": FETCH_TRUNK_LENGTH,
         "length_scale": LENGTH_SCALE,
-        "time_scale": TIME_SCALE,
-        "velocity_scale": VELOCITY_SCALE,
+        "time_scale": time_scale,
+        "froude_time_scale": TIME_SCALE,
+        "is_froude_similar": is_froude_similar,
+        "velocity_scale": velocity_scale,
         "source_fps": FPS,
         "target_fps": FPS,
-        "retimed_parent_frames": retimed_length(),
-        "crops_per_parent": CROPS_PER_PARENT,
-        "crop_starts_target_frames": crop_starts().tolist(),
+        "retimed_parent_frames": retimed_length(time_scale=time_scale),
+        "crops_per_parent": crops_per_parent,
+        "crop_starts_target_frames": crop_starts(
+            time_scale=time_scale,
+            crops_per_parent=crops_per_parent,
+        ).tolist(),
         "interpolation": {
             "root_and_joints": "linear",
             "yaw": "unwrapped-linear",
@@ -293,14 +340,14 @@ def build(parent_root: Path, output_root: Path) -> dict:
             "feet": "recomputed Fetch forward kinematics",
         },
         "reference_source_speed_mps": SOURCE_SPEED_MPS,
-        "recommended_fetch_speed": TARGET_SPEED_FETCH,
+        "recommended_fetch_speed": target_speed,
         "command_horizon_seconds": COMMAND_HORIZON_SECONDS,
-        "recommended_command_x": TARGET_COMMAND_X,
+        "recommended_command_x": target_command,
     }
     manifest = {
         **parent_manifest,
         "created_utc": datetime.now(timezone.utc).isoformat(),
-        "variant": "dynamic-similarity-v2",
+        "variant": variant,
         "counts": counts,
         "sessions": sessions,
         "global_pass_rate": sum(counts.values()) / candidate_total,
@@ -320,7 +367,7 @@ def build(parent_root: Path, output_root: Path) -> dict:
     (output_root / "README.md").write_text(
         "# Dynamically scaled Demo F release\n\n"
         "This local derived release time-dilates every accepted retargeted clip "
-        f"by {TIME_SCALE:.4f}x while retaining 50 Hz output. It preserves session "
+        f"by {time_scale:.4f}x while retaining 50 Hz output. It preserves session "
         "splits and never joins parent clips. See `manifest.json` for complete "
         "provenance and scaling constants.\n"
     )
@@ -331,8 +378,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--parent-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--output-root", type=Path, default=DYNAMIC_ROOT)
+    parser.add_argument("--time-scale", type=float, default=TIME_SCALE)
+    parser.add_argument("--crops-per-parent", type=int, default=CROPS_PER_PARENT)
+    parser.add_argument("--variant", default="dynamic-similarity-v2")
     args = parser.parse_args()
-    manifest = build(args.parent_root, args.output_root)
+    manifest = build(
+        args.parent_root,
+        args.output_root,
+        time_scale=args.time_scale,
+        crops_per_parent=args.crops_per_parent,
+        variant=args.variant,
+    )
     print(
         json.dumps(
             {

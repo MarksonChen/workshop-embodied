@@ -11,6 +11,9 @@ gravity-relative Froude time scale, and repeats Demo B's self-supervised future
 prediction objective. The resulting model is frozen for Demo G.
 
 Demo F is not RL: it has no actions, rewards, or environment interactions.
+Demo H reuses the retargeting pipeline but owns a separately versioned `1.75x`
+timing derivative. That empirical variant does not replace Demo F's accepted
+Froude-scaled dataset or checkpoint.
 
 ## Data construction
 

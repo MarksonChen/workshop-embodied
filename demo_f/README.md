@@ -60,6 +60,22 @@ uv run --extra workshop python -m demo_f.dataset.validate \
   --root demo_f/dataset/release_dynamic
 ```
 
+Demo H uses a separate, empirically selected timing variant rather than
+changing this canonical Demo F release. Build its one-crop `1.75x` derivative
+with:
+
+```bash
+uv run --extra workshop python -m demo_f.dataset.retime \
+  --time-scale 1.75 --crops-per-parent 1 \
+  --variant temporal-dilation-1p75-v1 \
+  --output-root demo_f/dataset/release_retime_1p75
+```
+
+The 1.75 factor was chosen by inspecting temporally interpolated examples. It
+must be described as an empirical Demo H choice, not as Froude similarity. It
+contains 1,804/278/344 train/validation/test clips and leaves canonical Demo F
+and Demo G unchanged.
+
 ## Frozen representation and model
 
 Each physical frame has 60 quantities available both in the dataset and in a
@@ -161,7 +177,7 @@ config.py              retarget and accepted prior settings
 retarget.py            semantic preprocessing and sequence IK
 features.py            shared 60-D offline/online feature contract
 dataset/build.py       raw Aldarondo data -> public kinematic release
-dataset/retime.py      parent release -> Froude-scaled dynamic release
+dataset/retime.py      configurable temporal dilation; Froude by default
 dataset/validate.py    fail-closed schema, checksum, and geometry audit
 train.py               conditional Gaussian-prior training
 evaluate.py            held-out rollout and likelihood gates

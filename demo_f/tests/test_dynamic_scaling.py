@@ -44,3 +44,21 @@ def test_retime_slows_velocity_and_uses_nearest_contacts():
     np.testing.assert_array_equal(clip["contacts"], contacts[expected_index])
     assert clip["joint_angles"].shape == (CLIP_FRAMES, 10)
     assert clip["feet_local"].shape == (CLIP_FRAMES, 4, 3)
+
+
+def test_selected_moderate_retime_uses_one_centered_crop():
+    factor = 1.75
+    starts = crop_starts(time_scale=factor, crops_per_parent=1)
+    expected_available = int(np.floor((CLIP_FRAMES - 1) * factor)) + 1 - CLIP_FRAMES
+    np.testing.assert_array_equal(starts, [round(expected_available / 2)])
+    root, quaternion, angles, contacts = synthetic_clip()
+    clip = retime_clip(
+        root,
+        quaternion,
+        angles,
+        contacts,
+        int(starts[0]),
+        time_scale=factor,
+    )
+    realized = np.diff(clip["root_position"][:, 0]).mean() * FPS
+    np.testing.assert_allclose(realized, 2.0 / factor, rtol=2e-5)
