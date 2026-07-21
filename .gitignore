@@ -60,6 +60,9 @@ demo_h/dataset/release/
 demo_h/dataset/release_direct/
 demo_h/dataset/release_retime_1p75/
 
+# Demo J checkpoints, recordings, diagnostics, and videos
+demo_j/out/
+
 # Demo A run artifacts
 demo_a/runs/
 demo_a/out/

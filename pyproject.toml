@@ -30,10 +30,19 @@ workshop = [
     "scipy>=1.15",
 ]
 dev = ["pytest>=8"]
+# Demo J runs on the repository's modern TRACK-MJX/JAX stack.  Demo H's legacy
+# brax.v1 commands remain isolated and exchange arrays with Demo J.
+demo-j = [
+    "brainpy",
+    "h5py>=3.12",
+    "matplotlib>=3.10",
+    "scikit-learn>=1.7",
+]
 
 [tool.uv.sources]
 # track-mjx is vendored as a submodule under ref/repos, used editable.
 track-mjx = { path = "ref/repos/track-mjx", editable = true }
+brainpy = { path = "ref/repos/BrainPy", editable = true }
 # uv does NOT inherit `tool.uv.sources` from a dependency's own pyproject, so
 # track-mjx's git pins are mirrored here. These revs must stay in sync with
 # ref/repos/track-mjx/pyproject.toml.

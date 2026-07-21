@@ -1,0 +1,124 @@
+<mujoco model="demo_j_fetch">
+  <compiler angle="radian" coordinate="local" autolimits="true"/>
+  <option timestep="0.005" gravity="0 0 -9.8" integrator="implicitfast"
+          solver="Newton" iterations="5" ls_iterations="5"/>
+
+  <default>
+    <joint type="hinge" limited="true" range="-1.0471975512 1.0471975512"
+           damping="35" armature="0.01"/>
+    <geom type="box" friction="0.77459666924 0.005 0.0001"
+          condim="3" rgba="0.55 0.42 0.28 1"/>
+    <motor ctrllimited="true" ctrlrange="-1 1"/>
+  </default>
+
+  <visual>
+    <global offwidth="640" offheight="480"/>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.8 0.8 0.8"/>
+  </visual>
+
+  <worldbody>
+    <light name="sun" pos="0 -3 8" dir="0 0 -1" directional="true"/>
+    <geom name="Ground" type="plane" size="30 30 0.1"
+          rgba="0.88 0.90 0.92 1" contype="1" conaffinity="1"/>
+
+    <body name="Torso" pos="0 0 1.375">
+      <freejoint name="root"/>
+      <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+      <geom name="Torso_geom" size="0.75 0.25 0.125"
+            contype="0" conaffinity="0" rgba="0.42 0.30 0.18 1"/>
+      <camera name="track" mode="trackcom" pos="-5 -7 3" xyaxes="0.81 -0.58 0 0.18 0.25 0.95"/>
+
+      <body name="Shoulders" pos="1 0 0">
+        <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+        <joint name="Torso_Shoulders" pos="0 0 0" axis="1 0 0"/>
+        <geom name="Shoulders_geom" size="0.25 0.75 0.125"
+              contype="0" conaffinity="0"/>
+
+        <body name="Front Right Upper" pos="0 -0.875 -0.375">
+          <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+          <joint name="Shoulders_Front Right Upper" pos="0 0 0.375" axis="0 1 0"/>
+          <geom name="Front Right Upper_geom" size="0.25 0.125 0.5"
+                contype="0" conaffinity="0"/>
+          <body name="Front Right Lower" pos="0 0.25 -0.5">
+            <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+            <joint name="Front Right Upper_Front Right Lower"
+                   pos="0 0 0.25" axis="0 1 0"/>
+            <geom name="Front Right Lower_geom" size="0.25 0.125 0.5"
+                  contype="1" conaffinity="1" rgba="0.35 0.25 0.15 1"/>
+            <site name="front_right_foot" pos="0 0 -0.5" size="0.04"
+                  rgba="0.8 0.1 0.1 1"/>
+          </body>
+        </body>
+
+        <body name="Front Left Upper" pos="0 0.875 -0.375">
+          <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+          <joint name="Shoulders_Front Left Upper" pos="0 0 0.375" axis="0 1 0"/>
+          <geom name="Front Left Upper_geom" size="0.25 0.125 0.5"
+                contype="0" conaffinity="0"/>
+          <body name="Front Left Lower" pos="0 -0.25 -0.5">
+            <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+            <joint name="Front Left Upper_Front Left Lower"
+                   pos="0 0 0.25" axis="0 1 0"/>
+            <geom name="Front Left Lower_geom" size="0.25 0.125 0.5"
+                  contype="1" conaffinity="1" rgba="0.35 0.25 0.15 1"/>
+            <site name="front_left_foot" pos="0 0 -0.5" size="0.04"
+                  rgba="0.1 0.3 0.8 1"/>
+          </body>
+        </body>
+      </body>
+
+      <body name="Hips" pos="-1 0 0">
+        <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+        <joint name="Torso_Hips" pos="0 0 0" axis="1 0 0"/>
+        <geom name="Hips_geom" size="0.25 0.75 0.125"
+              contype="0" conaffinity="0"/>
+
+        <body name="Back Right Upper" pos="0 -0.875 -0.375">
+          <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+          <joint name="Hips_Back Right Upper" pos="0 0 0.375" axis="0 1 0"/>
+          <geom name="Back Right Upper_geom" size="0.25 0.125 0.5"
+                contype="0" conaffinity="0"/>
+          <body name="Back Right Lower" pos="0 0.25 -0.5">
+            <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+            <joint name="Back Right Upper_Back Right Lower"
+                   pos="0 0 0.25" axis="0 1 0"/>
+            <geom name="Back Right Lower_geom" size="0.25 0.125 0.5"
+                  contype="1" conaffinity="1" rgba="0.35 0.25 0.15 1"/>
+            <site name="back_right_foot" pos="0 0 -0.5" size="0.04"
+                  rgba="0.8 0.1 0.1 1"/>
+          </body>
+        </body>
+
+        <body name="Back Left Upper" pos="0 0.875 -0.375">
+          <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+          <joint name="Hips_Back Left Upper" pos="0 0 0.375" axis="0 1 0"/>
+          <geom name="Back Left Upper_geom" size="0.25 0.125 0.5"
+                contype="0" conaffinity="0"/>
+          <body name="Back Left Lower" pos="0 -0.25 -0.5">
+            <inertial pos="0 0 0" mass="1" diaginertia="1 1 1"/>
+            <joint name="Back Left Upper_Back Left Lower"
+                   pos="0 0 0.25" axis="0 1 0"/>
+            <geom name="Back Left Lower_geom" size="0.25 0.125 0.5"
+                  contype="1" conaffinity="1" rgba="0.35 0.25 0.15 1"/>
+            <site name="back_left_foot" pos="0 0 -0.5" size="0.04"
+                  rgba="0.1 0.3 0.8 1"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- Positive controls increase the legacy Fetch angle_vel coordinates. -->
+  <actuator>
+    <motor name="Torso_Shoulders" joint="Torso_Shoulders" gear="300"/>
+    <motor name="Torso_Hips" joint="Torso_Hips" gear="300"/>
+    <motor name="Shoulders_Front Right Upper" joint="Shoulders_Front Right Upper" gear="300"/>
+    <motor name="Front Right Upper_Front Right Lower" joint="Front Right Upper_Front Right Lower" gear="300"/>
+    <motor name="Shoulders_Front Left Upper" joint="Shoulders_Front Left Upper" gear="300"/>
+    <motor name="Front Left Upper_Front Left Lower" joint="Front Left Upper_Front Left Lower" gear="300"/>
+    <motor name="Hips_Back Right Upper" joint="Hips_Back Right Upper" gear="300"/>
+    <motor name="Back Right Upper_Back Right Lower" joint="Back Right Upper_Back Right Lower" gear="300"/>
+    <motor name="Hips_Back Left Upper" joint="Hips_Back Left Upper" gear="300"/>
+    <motor name="Back Left Upper_Back Left Lower" joint="Back Left Upper_Back Left Lower" gear="300"/>
+  </actuator>
+</mujoco>
