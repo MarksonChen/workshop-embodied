@@ -164,6 +164,45 @@ an ordinary standing reset, the frozen prior survives five seconds, travels
 contacts, and never
 saturates an actuator.
 
+### Robustness status
+
+A later all-test-clips audit supersedes the single standing-rollout claim as a
+robustness assessment. The accepted prior falls in 10/342 five-second held-out
+rollouts, so it remains the reproducible workshop artifact but must not be
+described as generally robust or fully in-distribution.
+
+The current research candidate adds real 256-frame (5.1-second) contiguous
+source segments rather than stitching or looping the independent 64-frame
+release. Build the source and exact-physics releases, then opt into them during
+training:
+
+```bash
+uv run --extra workshop python -m demo_h.dataset.long_sequences retarget \
+  --output-root demo_h/dataset/release_long_reference
+
+env -u LD_LIBRARY_PATH uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax[cuda12]==0.4.30' \
+  --with 'jaxlib==0.4.30' --with 'scipy>=1.15' \
+  python -m demo_h.dataset.long_sequences project \
+    --reference-root demo_h/dataset/release_long_reference \
+    --output-root demo_h/dataset/release_long \
+    --splits train validation test
+
+uv run --extra workshop python -m demo_h.train_prior \
+  --long-dataset-root demo_h/dataset/release_long \
+  --long-sequence-probability 0.5 \
+  --feature-noise-std 0.10 \
+  --output demo_h/out/prior_continuous_candidate.pt
+```
+
+This produces 43/6/10 train/validation/test trajectories and improves the
+frozen audit objective from `4.43` to `3.19`, but survival remains `98.83%`
+(four failures), below the frozen `99%` promotion gate. Its standing
+prior-only speed sweep also under-tracks commands. It is therefore a documented
+candidate, not a replacement for the accepted artifact. See
+[`experiment/DECISIONS.md`](experiment/DECISIONS.md) for rejected variants and
+the matched beta/RSA follow-up.
+
 ## Post-train the two live RL arms
 
 Use Demo A's ordinary task-only PPO as the scratch baseline. Demo H itself has

@@ -215,3 +215,39 @@ This log is append-only once full model training begins.
   clips therefore contain temporal gaps and must not be stitched or looped.
   Build true long, non-looped examples from contiguous strict-locomotion source
   segments before making a new prior acceptance claim.
+
+## 2026-07-22 — continuous-data candidate and matched beta audit
+
+- Build a separate exact-physics robustness release from contiguous
+  strict-locomotion source segments: 43 train, 6 validation, and 10 test
+  trajectories, each 256 frames (5.1 seconds). These trajectories contain no
+  crop joins, periodic wrapping, or learned regeneration.
+- Supplementing the ordinary local training windows with a sparse set of
+  continuous trajectories lowers the frozen audit objective from `4.43` to
+  `3.19`, while native trajectory skill changes from `38.30%` to a slightly
+  lower `37.26%`; motion/action sliced-Wasserstein distances fall to
+  `.03437/.00113`. It does not clear the hard survival gate: the same four of
+  342 held-out clips fail, for `98.83%` survival rather than the required
+  `99%`.
+- Reject denser overlapping long windows, recurrent-history noise, a second
+  seed, and per-joint residual-variance weighting. Their frozen objectives are
+  `4.10`, `3.56`, `4.72`, and `4.81`, respectively; none improves survival.
+  Preserve the sparse continuous model as a candidate, not the workshop
+  default.
+- Audit the candidate prior alone from standing at commands
+  `1.5/2.0/2.5/3.0/3.5/4.0`. All six five-second rollouts remain upright, but
+  realized forward speed is inconsistent and substantially under-tracks the
+  command. Do not call this a robust speed-conditioned locomotion prior.
+- Train a matched 30M-transition PPO beta pilot at
+  `0/.025/.05/.075/.10/.15` against the exact candidate-prior hash
+  `a81a116fe37011c742b370e9c8c79b27c8108b60bbe38e6b32e86ed1321e74f2`.
+  Every displayed speed rollout survives, but `beta=.15` has much lower PPO
+  task return (`604` versus `1022–1088` for beta at most `.10`). The six-speed
+  validator is strongest at `beta=.05` (6/6 four-limb stride passes), while
+  `beta=0` passes 0/6 despite the best speed tracking. Naturalness remains a
+  validation result, never a training reward.
+- On the same fixed 64-frame input trials and all three native SNN seeds,
+  beta-zero again has the highest mean RSA (`.900`) and exact-input-partial RSA
+  (`.684`). The continuous-data candidate therefore does not rescue the claim
+  that stronger beta makes Demo H more SNN-like. This is one Demo H training
+  seed and remains an exploratory robustness check.

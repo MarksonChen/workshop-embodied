@@ -169,3 +169,27 @@ claim.
 Adding the terminal state changes crossed-seed beta means by at most `.0083`
 for raw RSA and `.0322` for exact-input-partial RSA relative to the provisional
 63-bin calculation; the qualitative conclusion is unchanged.
+
+## Continuous-prior beta pilot
+
+This exploratory follow-up changes only the Demo H frozen prior and matched PPO
+checkpoints. It uses the sparse continuous-data candidate with JAX SHA-256
+`a81a116fe37011c742b370e9c8c79b27c8108b60bbe38e6b32e86ed1321e74f2`.
+The fixed 30-trial, 64-state-frame protocol and the three accepted native SNN
+recordings are otherwise unchanged.
+
+| Beta | PPO return | RSA | Exact-input partial RSA | 200 ms delay |
+|---:|---:|---:|---:|---:|
+| 0 | 1088.24 | **.900** | **.684** | .665 |
+| .025 | 1021.68 | .783 | .441 | .638 |
+| .05 | 1042.75 | .851 | .571 | .610 |
+| .075 | 1062.81 | .849 | .540 | .628 |
+| .10 | 1052.56 | .848 | .552 | .599 |
+| .15 | 604.25 | .808 | .405 | .475 |
+
+This pilot crosses one Demo H training seed with all three SNN seeds; it is not
+a multiseed PPO estimate. Beta zero remains highest, so the better offline and
+long-rollout scores of the candidate prior do not rescue a monotonic
+beta-to-SNN-alignment claim. The synchronized six-beta by six-speed video and
+its rollout metrics live under
+`demo_h/out/prior_iteration/beta_v2_speed_sweeps/`.

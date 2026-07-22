@@ -112,6 +112,17 @@ state changes the beta means by at most `.0083` for raw RSA and `.0322` for
 partial RSA. The qualitative ordering is therefore insensitive to this final
 state-alignment correction.
 
+### Continuous-prior sensitivity check
+
+A later pilot repeated the same 30 fixed trials and all three native SNN seeds
+using one matched Demo H PPO seed trained against the continuous-data candidate
+prior. Mean raw/partial RSA at beta zero is `.900/.684`; the corresponding
+values at beta `.10` are `.848/.552`. Beta zero remains highest, while
+beta `.15` also loses substantial task return. Thus improving the prior's
+frozen rollout audit does not reverse the neural-alignment result. This is a
+single-PPO-seed sensitivity check, not a replacement for the crossed-seed
+result above. Its report and plot are under `out/prior_iteration_v2/`.
+
 ## Rejected periodic experiment
 
 The earlier workflow repeated a screened 32-frame segment for 1,000 bins. That
