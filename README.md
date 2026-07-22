@@ -3,15 +3,11 @@
 Neuromechanical rodent control experiments built on
 [MIMIC-MJX](https://mimic-mjx.talmolab.org) (stac-mjx + track-mjx).
 
-The repository has two connected tracks:
+Demos A–J build a graduate workshop on reinforcement learning, self-supervised
+learning, and generative pretraining followed by RL post-training. 
 
-- `rl/` drives the virtual rodent from point A to point B with a high-level policy
-  over the published frozen imitation decoder (the paper's §2.5 transfer).
-- Demos A–J build a graduate workshop on reinforcement learning, self-supervised
-  learning, and generative pretraining followed by RL post-training. The live
-  three-part curriculum (Demos A, F, and H) is in
-  [`workshop_4.ipynb`](workshop_4.ipynb); the plan is in
-  [`ref/docs/WORKSHOP_PLAN.md`](ref/docs/WORKSHOP_PLAN.md).
+Demos A, F, and H becomes 
+[`workshop_4.ipynb`](workshop_4.ipynb)
 
 ## Workshop walkthrough: from reward to a generative motor prior
 
