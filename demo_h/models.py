@@ -24,8 +24,20 @@ class FeedbackActionDecoder(nn.Module):
         latent_dim: int = PLAN_DIM,
         action_dim: int = ACTION_DIM,
         hidden: int = 192,
+        action_parameterization: str = "previous_control_residual",
+        previous_mean_coefficient: float = 1.0,
     ):
         super().__init__()
+        if action_parameterization not in {
+            "previous_control_residual",
+            "leaky_previous",
+            "direct",
+        }:
+            raise ValueError(action_parameterization)
+        if not 0.0 <= previous_mean_coefficient <= 1.0:
+            raise ValueError(previous_mean_coefficient)
+        self.action_parameterization = action_parameterization
+        self.previous_mean_coefficient = float(previous_mean_coefficient)
         input_dim = feature_dim + latent_dim + action_dim + PHASE_DIM + COMMAND_DIM
         self.network = nn.Sequential(
             nn.Linear(input_dim, hidden),
@@ -48,13 +60,20 @@ class FeedbackActionDecoder(nn.Module):
         correction = self.network(
             torch.cat((feature, plan, previous_control, phase, command), dim=-1)
         )
-        previous_mean = torch.atanh(previous_control)
-        return previous_mean + correction
+        if self.action_parameterization == "direct":
+            return correction
+        if self.action_parameterization == "leaky_previous":
+            return (
+                self.previous_mean_coefficient * torch.atanh(previous_control)
+                + correction
+            )
+        return torch.atanh(previous_control) + correction
 
     def distribution(self, feature, plan, previous_control, phase, command):
         mean = self(feature, plan, previous_control, phase, command)
         log_std = self.log_std.clamp(-5.0, 1.0)
         return mean, log_std
+
 
 def pre_tanh(control: torch.Tensor) -> torch.Tensor:
     return torch.atanh(control.clamp(-PRIOR_CONTROL_LIMIT, PRIOR_CONTROL_LIMIT))

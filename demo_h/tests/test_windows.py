@@ -20,7 +20,8 @@ def test_token_to_action_alignment_has_no_future_leakage():
 
     windows = state_action_windows(tokens, features, controls, data, config)
 
-    assert windows.anchors.tolist() == [4, 5, 6, 7, 8]
+    assert windows.anchors.tolist() == list(range(4, 13))
+    assert windows.action_anchors.tolist() == list(range(4, 16))
     # anchor 4: history ends at token 3/frame 15, and controls 15..18
     # produce the four frames summarized by target token 4.
     assert windows.history[0, -1, 0].item() == 3
@@ -29,3 +30,6 @@ def test_token_to_action_alignment_has_no_future_leakage():
     assert windows.target_control[:4, 0].tolist() == [15, 16, 17, 18]
     assert windows.previous_control[:4, 0].tolist() == [14, 15, 16, 17]
     assert windows.command[0, 0].item() == 31
+    assert windows.command[-1, 0].item() == 31
+    assert windows.action_anchor_command[-1, 0].item() == 31
+    assert windows.target_control[-4:, 0].tolist() == [59, 60, 61, 62]

@@ -32,6 +32,7 @@ def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dic
         "source_checkpoint_sha256": sha256(checkpoint_path),
         "dataset_manifest_sha256": checkpoint["dataset_manifest_sha256"],
         "dataset_variant": checkpoint["dataset_variant"],
+        "history_encoding": checkpoint.get("history_encoding", "full_clip"),
         "config": checkpoint["config"],
         "temporal_contract": (
             f"{BUFFER_FRAMES} raw frames -> {config.history_tokens} history tokens "
@@ -120,9 +121,7 @@ def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dic
         jnp.eye(PHASE_DIM)[0],
         jnp.asarray(command),
     )
-    plan_error = float(
-        np.max(np.abs(np.asarray(jax_plan) - torch_plan.cpu().numpy()))
-    )
+    plan_error = float(np.max(np.abs(np.asarray(jax_plan) - torch_plan.cpu().numpy())))
     action_error = float(
         np.max(np.abs(np.asarray(jax_mean) - torch_mean.cpu().numpy()))
     )
@@ -147,9 +146,7 @@ def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dic
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--checkpoint", type=Path, default=OUT / "prior_retime_1p75.pt"
-    )
+    parser.add_argument("--checkpoint", type=Path, default=OUT / "prior_retime_1p75.pt")
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument(
         "--output", type=Path, default=OUT / "prior_retime_1p75_jax.npz"

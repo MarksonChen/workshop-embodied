@@ -19,7 +19,7 @@ from demo_f.config import FEATURE_CONTRACT_VERSION
 from demo_f.models import ConditionalTransformer, MotionAutoencoder
 from demo_f.losses import joint_limit_loss
 from demo_f.windows import encode_in_batches
-from demo_h.config import ACTION_PHASES, OUT, PriorConfig
+from demo_h.config import ACTION_PHASES, BUFFER_FRAMES, OUT, PriorConfig
 from demo_h.dataset.contract import DATASET_VARIANT, DEFAULT_ROOT
 from demo_h.dataset.loader import load_manifest, load_split
 from demo_h.models import FeedbackActionDecoder, pre_tanh, tanh_gaussian_nll
@@ -56,6 +56,34 @@ def _predict_rollout(model, history, command, steps: int = 4):
     return torch.cat(predictions, dim=1)
 
 
+@torch.inference_mode()
+def _rolling_buffer_histories(
+    tokenizer,
+    normalized_features: torch.Tensor,
+    anchors: np.ndarray,
+    token_mean: torch.Tensor,
+    token_std: torch.Tensor,
+) -> torch.Tensor:
+    """Encode the exact 16-frame buffers that the deployed prior will see."""
+
+    frames = torch.stack(
+        [
+            normalized_features[
+                :,
+                int(anchor * ACTION_PHASES - BUFFER_FRAMES) : int(
+                    anchor * ACTION_PHASES
+                ),
+            ]
+            for anchor in anchors
+        ],
+        dim=1,
+    )
+    clips, windows = frames.shape[:2]
+    tokens = encode_in_batches(tokenizer, frames.flatten(0, 1))
+    tokens = (tokens - token_mean) / token_std
+    return tokens.view(clips, windows, tokens.shape[-2], tokens.shape[-1]).flatten(0, 1)
+
+
 def _state_mse(model, windows, command_mean, command_std, batch_size=2048):
     squared, count = 0.0, 0
     with torch.inference_mode():
@@ -85,7 +113,7 @@ def _action_metrics(
     # complete clip so the negative retains phase/anchor but changes behavior.
     permutation = torch.roll(
         torch.arange(len(predicted_plan), device=DEVICE),
-        len(windows.anchors) * ACTION_PHASES,
+        len(windows.action_anchors) * ACTION_PHASES,
     )
     with torch.inference_mode():
         for offset in range(0, len(predicted_plan), batch_size):
@@ -102,9 +130,7 @@ def _action_metrics(
             mean, log_std = decoder.distribution(*args)
             prediction = torch.tanh(mean)
             sums["squared"] += F.mse_loss(prediction, target, reduction="sum").item()
-            sums["tanh_nll"] += tanh_gaussian_nll(
-                mean, log_std, target
-            ).sum().item()
+            sums["tanh_nll"] += tanh_gaussian_nll(mean, log_std, target).sum().item()
             shuffled_mean = decoder(
                 windows.current_feature[offset:stop],
                 predicted_plan[permutation[offset:stop]],
@@ -169,13 +195,11 @@ def _closed_loop_action_metrics(
 ) -> dict:
     """Roll predicted controls through the decoder's previous-action input."""
 
-    sequence_steps = len(windows.anchors) * ACTION_PHASES
+    sequence_steps = len(windows.action_anchors) * ACTION_PHASES
     sequence_count = len(windows.target_control) // sequence_steps
     feature = windows.current_feature.view(sequence_count, sequence_steps, -1)
     plan = predicted_plan.view(sequence_count, sequence_steps, -1)
-    previous_targets = windows.previous_control.view(
-        sequence_count, sequence_steps, -1
-    )
+    previous_targets = windows.previous_control.view(sequence_count, sequence_steps, -1)
     phase = windows.phase.view(sequence_count, sequence_steps, -1)
     command = ((windows.action_command - command_mean) / command_std).view(
         sequence_count, sequence_steps, -1
@@ -209,24 +233,57 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--dataset-variant", default=DATASET_VARIANT)
-    parser.add_argument(
-        "--output", type=Path, default=OUT / "prior_retime_1p75.pt"
-    )
+    parser.add_argument("--output", type=Path, default=OUT / "prior_retime_1p75.pt")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--tokenizer-steps", type=int, default=PriorConfig.tokenizer_steps)
-    parser.add_argument("--predictor-steps", type=int, default=PriorConfig.predictor_steps)
+    parser.add_argument(
+        "--tokenizer-steps", type=int, default=PriorConfig.tokenizer_steps
+    )
+    parser.add_argument(
+        "--predictor-steps", type=int, default=PriorConfig.predictor_steps
+    )
     parser.add_argument("--action-steps", type=int, default=PriorConfig.action_steps)
+    parser.add_argument(
+        "--history-encoding",
+        choices=("full_clip", "rolling_buffer"),
+        default="full_clip",
+        help="Planner history construction; rolling_buffer matches deployment exactly",
+    )
+    parser.add_argument(
+        "--action-parameterization",
+        choices=("previous_control_residual", "leaky_previous", "direct"),
+        default="previous_control_residual",
+    )
+    parser.add_argument("--previous-mean-coefficient", type=float, default=1.0)
+    parser.add_argument(
+        "--predicted-plan-probability",
+        type=float,
+        default=PriorConfig.predicted_plan_probability,
+    )
+    parser.add_argument(
+        "--predicted-previous-control-probability",
+        type=float,
+        default=PriorConfig.predicted_previous_control_probability,
+    )
+    parser.add_argument(
+        "--plan-noise-std", type=float, default=PriorConfig.plan_noise_std
+    )
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     config = PriorConfig(
         tokenizer_steps=20 if args.smoke else args.tokenizer_steps,
         predictor_steps=20 if args.smoke else args.predictor_steps,
         action_steps=20 if args.smoke else args.action_steps,
+        action_parameterization=args.action_parameterization,
+        previous_mean_coefficient=args.previous_mean_coefficient,
+        predicted_plan_probability=args.predicted_plan_probability,
+        predicted_previous_control_probability=(
+            args.predicted_previous_control_probability
+        ),
+        plan_noise_std=args.plan_noise_std,
     )
+    config.validate_online_contract()
     seed_everything(args.seed)
-    manifest = load_manifest(
-        args.dataset_root, expected_variant=args.dataset_variant
-    )
+    manifest = load_manifest(args.dataset_root, expected_variant=args.dataset_variant)
     train = load_split(
         "train", args.dataset_root, expected_variant=args.dataset_variant
     )
@@ -238,11 +295,15 @@ def main() -> None:
         f"device={DEVICE}",
         flush=True,
     )
-    feature_mean_np = train.features.mean(axis=(0, 1), dtype=np.float64).astype(np.float32)
+    feature_mean_np = train.features.mean(axis=(0, 1), dtype=np.float64).astype(
+        np.float32
+    )
     std = np.maximum(
         train.features.std(axis=(0, 1), dtype=np.float64).astype(np.float32), 1e-4
     )
-    train_features = torch.from_numpy((train.features - feature_mean_np) / std).to(DEVICE)
+    train_features = torch.from_numpy((train.features - feature_mean_np) / std).to(
+        DEVICE
+    )
     validation_features = torch.from_numpy(
         (validation.features - feature_mean_np) / std
     ).to(DEVICE)
@@ -252,7 +313,9 @@ def main() -> None:
     feature_std = torch.from_numpy(std).to(DEVICE)
     generator = torch.Generator(device=DEVICE).manual_seed(args.seed)
 
-    tokenizer = MotionAutoencoder(config.feature_dim, config.hidden, config.latent_dim).to(DEVICE)
+    tokenizer = MotionAutoencoder(
+        config.feature_dim, config.hidden, config.latent_dim
+    ).to(DEVICE)
     predictor = ConditionalTransformer(
         latent_dim=config.latent_dim,
         future_tokens=1,
@@ -277,7 +340,10 @@ def main() -> None:
         torch.nn.utils.clip_grad_norm_(tokenizer.parameters(), 1.0)
         optimizer.step()
         if step == 0 or (step + 1) % 250 == 0 or step + 1 == config.tokenizer_steps:
-            print(f"[tokenizer] {step+1}/{config.tokenizer_steps} loss={loss.item():.5f}", flush=True)
+            print(
+                f"[tokenizer] {step + 1}/{config.tokenizer_steps} loss={loss.item():.5f}",
+                flush=True,
+            )
     tokenizer.eval()
     tokenizer_train_loss = _batched_loss(tokenizer, train_features)
     tokenizer_validation_loss = _batched_loss(tokenizer, validation_features)
@@ -295,12 +361,42 @@ def main() -> None:
     validation_windows = state_action_windows(
         validation_tokens, validation_features, validation_controls, validation, config
     )
+    if args.history_encoding == "rolling_buffer":
+        train_windows.history = _rolling_buffer_histories(
+            tokenizer,
+            train_features,
+            train_windows.anchors,
+            token_mean,
+            token_std,
+        )
+        validation_windows.history = _rolling_buffer_histories(
+            tokenizer,
+            validation_features,
+            validation_windows.anchors,
+            token_mean,
+            token_std,
+        )
+        train_windows.action_history = _rolling_buffer_histories(
+            tokenizer,
+            train_features,
+            train_windows.action_anchors,
+            token_mean,
+            token_std,
+        )
+        validation_windows.action_history = _rolling_buffer_histories(
+            tokenizer,
+            validation_features,
+            validation_windows.action_anchors,
+            token_mean,
+            token_std,
+        )
     command_mean = train_windows.command.mean(dim=0)
     command_std = train_windows.command.std(dim=0).clamp_min(1e-4)
     print(
         f"state windows={len(train_windows.history):,}; "
         f"action targets={len(train_windows.target_control):,}; "
-        f"anchors={train_windows.anchors.tolist()}",
+        f"planner_anchors={train_windows.anchors.tolist()}; "
+        f"action_anchors={train_windows.action_anchors.tolist()}",
         flush=True,
     )
 
@@ -350,18 +446,25 @@ def main() -> None:
     ).item()
     with torch.inference_mode():
         train_predicted_plan = predictor.predict(
-            train_windows.history,
-            (train_windows.command - command_mean) / command_std,
+            train_windows.action_history,
+            (train_windows.action_anchor_command - command_mean) / command_std,
         )[:, 0].repeat_interleave(ACTION_PHASES, dim=0)
         validation_predicted_plan = predictor.predict(
-            validation_windows.history,
-            (validation_windows.command - command_mean) / command_std,
+            validation_windows.action_history,
+            (validation_windows.action_anchor_command - command_mean) / command_std,
         )[:, 0].repeat_interleave(ACTION_PHASES, dim=0)
     if train_predicted_plan.shape != train_windows.true_plan.shape:
-        raise AssertionError((train_predicted_plan.shape, train_windows.true_plan.shape))
+        raise AssertionError(
+            (train_predicted_plan.shape, train_windows.true_plan.shape)
+        )
 
     decoder = FeedbackActionDecoder(
-        config.feature_dim, config.latent_dim, config.action_dim, config.hidden
+        config.feature_dim,
+        config.latent_dim,
+        config.action_dim,
+        config.hidden,
+        config.action_parameterization,
+        config.previous_mean_coefficient,
     ).to(DEVICE)
     optimizer = torch.optim.AdamW(decoder.parameters(), lr=config.learning_rate)
     initial_metrics = _action_metrics(
@@ -383,13 +486,11 @@ def main() -> None:
     # useful guardrail but a poor selector: copying one action forever cannot
     # drive the body. Give the causal multi-step rollout four times its weight.
     best_action_score = (
-        0.25
-        * initial_metrics["mse"]
-        / initial_metrics["previous_control_mse"]
+        0.25 * initial_metrics["mse"] / initial_metrics["previous_control_mse"]
         + initial_closed_loop["closed_loop_mse"]
         / initial_closed_loop["repeated_initial_control_mse"]
     )
-    sequence_steps = len(train_windows.anchors) * ACTION_PHASES
+    sequence_steps = len(train_windows.action_anchors) * ACTION_PHASES
     if len(train_windows.target_control) % sequence_steps:
         raise AssertionError("action windows are not complete clip-major sequences")
     sequence_count = len(train_windows.target_control) // sequence_steps
@@ -398,19 +499,15 @@ def main() -> None:
             sequence_count, sequence_steps, -1
         ),
         "true_plan": train_windows.true_plan.view(sequence_count, sequence_steps, -1),
-        "predicted_plan": train_predicted_plan.view(
-            sequence_count, sequence_steps, -1
-        ),
+        "predicted_plan": train_predicted_plan.view(sequence_count, sequence_steps, -1),
         "previous": train_windows.previous_control.view(
             sequence_count, sequence_steps, -1
         ),
         "phase": train_windows.phase.view(sequence_count, sequence_steps, -1),
-        "command": (
-            (train_windows.action_command - command_mean) / command_std
-        ).view(sequence_count, sequence_steps, -1),
-        "target": train_windows.target_control.view(
+        "command": ((train_windows.action_command - command_mean) / command_std).view(
             sequence_count, sequence_steps, -1
         ),
+        "target": train_windows.target_control.view(sequence_count, sequence_steps, -1),
     }
     decoder.train()
     for step in range(config.action_steps):
@@ -428,9 +525,7 @@ def main() -> None:
                 true_plan.shape, device=DEVICE, generator=generator
             )
             choose_prediction = (
-                torch.rand(
-                    (len(clip_index), 1), device=DEVICE, generator=generator
-                )
+                torch.rand((len(clip_index), 1), device=DEVICE, generator=generator)
                 < config.predicted_plan_probability
             )
             plan = torch.where(
@@ -459,9 +554,7 @@ def main() -> None:
             )
             predicted_control = torch.tanh(action_mean).detach()
             use_prediction = (
-                torch.rand(
-                    (len(clip_index), 1), device=DEVICE, generator=generator
-                )
+                torch.rand((len(clip_index), 1), device=DEVICE, generator=generator)
                 < config.predicted_previous_control_probability
             )
             previous = torch.where(use_prediction, predicted_control, target)
@@ -493,8 +586,7 @@ def main() -> None:
             )
             score = (
                 0.25 * metrics["mse"] / metrics["previous_control_mse"]
-                + metrics["closed_loop_mse"]
-                / metrics["repeated_initial_control_mse"]
+                + metrics["closed_loop_mse"] / metrics["repeated_initial_control_mse"]
             )
             if score < best_action_score:
                 best_action_score = score
@@ -543,6 +635,7 @@ def main() -> None:
         **{f"action_{name}": value for name, value in action_metrics.items()},
         "state_sigma": float(state_sigma),
         "action_log_std": decoder.log_std.detach().cpu().tolist(),
+        "history_encoding": args.history_encoding,
         "training_seconds": time.perf_counter() - started,
     }
     checkpoint = {
@@ -552,6 +645,7 @@ def main() -> None:
         "seed": args.seed,
         "dataset_manifest_sha256": sha256(args.dataset_root / "manifest.json"),
         "dataset_variant": manifest["variant"],
+        "history_encoding": args.history_encoding,
         "feature_mean": feature_mean_np,
         "feature_std": std,
         "token_mean": token_mean.cpu().numpy(),

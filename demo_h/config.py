@@ -68,13 +68,13 @@ FETCH_FOOT_NAMES = (
 # One immutable online observation layout. Keeping the slices beside their
 # dimensions makes incompatible tuning fail visibly instead of drifting across
 # environment, policy, and evaluation modules.
-FEATURE_BUFFER_SLICE = slice(
-    BASE_OBS_DIM, BASE_OBS_DIM + BUFFER_FRAMES * FEATURE_DIM
-)
+FEATURE_BUFFER_SLICE = slice(BASE_OBS_DIM, BASE_OBS_DIM + BUFFER_FRAMES * FEATURE_DIM)
 PREVIOUS_CONTROL_SLICE = slice(
     FEATURE_BUFFER_SLICE.stop, FEATURE_BUFFER_SLICE.stop + ACTION_DIM
 )
-PHASE_SLICE = slice(PREVIOUS_CONTROL_SLICE.stop, PREVIOUS_CONTROL_SLICE.stop + PHASE_DIM)
+PHASE_SLICE = slice(
+    PREVIOUS_CONTROL_SLICE.stop, PREVIOUS_CONTROL_SLICE.stop + PHASE_DIM
+)
 PLAN_SLICE = slice(PHASE_SLICE.stop, PHASE_SLICE.stop + PLAN_DIM)
 COMMAND_SLICE = slice(PLAN_SLICE.stop, PLAN_SLICE.stop + COMMAND_DIM)
 OBS_DIM = COMMAND_SLICE.stop
@@ -105,6 +105,8 @@ class PriorConfig:
     predicted_plan_probability: float = 0.75
     predicted_previous_control_probability: float = 0.75
     plan_noise_std: float = 0.05
+    action_parameterization: str = "previous_control_residual"
+    previous_mean_coefficient: float = 1.0
 
     def validate_online_contract(self) -> None:
         expected = {
@@ -118,4 +120,28 @@ class PriorConfig:
         if actual != expected:
             raise ValueError(
                 f"Demo H online contract is frozen at {expected}, got {actual}"
+            )
+        if self.action_parameterization not in {
+            "previous_control_residual",
+            "leaky_previous",
+            "direct",
+        }:
+            raise ValueError(
+                f"unsupported action parameterization {self.action_parameterization!r}"
+            )
+        if not 0.0 <= self.previous_mean_coefficient <= 1.0:
+            raise ValueError(
+                f"previous-mean coefficient must be in [0,1], got "
+                f"{self.previous_mean_coefficient}"
+            )
+        for name in (
+            "predicted_plan_probability",
+            "predicted_previous_control_probability",
+        ):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0,1], got {value}")
+        if self.plan_noise_std < 0.0:
+            raise ValueError(
+                f"plan_noise_std must be non-negative, got {self.plan_noise_std}"
             )

@@ -20,9 +20,7 @@ from demo_f.jax_models import causal_conv, layer_norm, linear, sinusoidal_positi
 from demo_h.config import PRIOR_CONTROL_LIMIT, PriorConfig
 
 
-DEFAULT_PRIOR = (
-    Path(__file__).resolve().parent / "out" / "prior_retime_1p75_jax.npz"
-)
+DEFAULT_PRIOR = Path(__file__).resolve().parent / "out" / "prior_retime_1p75_jax.npz"
 
 
 @dataclass(frozen=True)
@@ -162,7 +160,9 @@ class DemoHPrior:
     def state_log_prob(self, history, realized_plan, raw_command):
         """Gaussian next-state-token log likelihood per latent dimension."""
 
-        residual = (realized_plan - self.predict_plan(history, raw_command)) / self.state_sigma
+        residual = (
+            realized_plan - self.predict_plan(history, raw_command)
+        ) / self.state_sigma
         return -0.5 * (
             jnp.square(residual)
             + 2.0 * jnp.log(self.state_sigma)
@@ -204,8 +204,15 @@ class DemoHPrior:
             self.action_decoder["network.4.weight"],
             self.action_decoder["network.4.bias"],
         )
-        previous_mean = jnp.arctanh(previous_control)
-        return previous_mean + correction
+        parameterization = self.metadata["config"].get(
+            "action_parameterization", "previous_control_residual"
+        )
+        if parameterization == "direct":
+            return correction
+        if parameterization == "leaky_previous":
+            coefficient = self.metadata["config"].get("previous_mean_coefficient", 1.0)
+            return coefficient * jnp.arctanh(previous_control) + correction
+        return jnp.arctanh(previous_control) + correction
 
 
 def load_prior(path: Path = DEFAULT_PRIOR) -> DemoHPrior:

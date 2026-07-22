@@ -33,6 +33,33 @@ def test_action_decoder_starts_at_previous_control_baseline():
     torch.testing.assert_close(torch.tanh(mean), previous)
 
 
+def test_direct_action_decoder_starts_at_zero_control():
+    model = FeedbackActionDecoder(action_parameterization="direct")
+    mean = model(
+        torch.zeros(1, 60),
+        torch.zeros(1, 16),
+        torch.linspace(-0.5, 0.5, 10).view(1, 10),
+        torch.eye(4)[:1],
+        torch.zeros(1, 3),
+    )
+    torch.testing.assert_close(mean, torch.zeros_like(mean))
+
+
+def test_leaky_action_decoder_starts_between_zero_and_previous_control():
+    model = FeedbackActionDecoder(
+        action_parameterization="leaky_previous", previous_mean_coefficient=0.5
+    )
+    previous = torch.linspace(-0.5, 0.5, 10).view(1, 10)
+    mean = model(
+        torch.zeros(1, 60),
+        torch.zeros(1, 16),
+        previous,
+        torch.eye(4)[:1],
+        torch.zeros(1, 3),
+    )
+    torch.testing.assert_close(mean, 0.5 * torch.atanh(previous))
+
+
 def test_tanh_likelihood_includes_change_of_variables():
     mean = torch.zeros(1, 1)
     log_std = torch.zeros(1)

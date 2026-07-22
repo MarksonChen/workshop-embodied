@@ -43,9 +43,13 @@ def load_models(path: Path):
             f"expected {FEATURE_CONTRACT_VERSION!r}"
         )
     names = {field.name for field in fields(PriorConfig)}
-    config = PriorConfig(**{k: v for k, v in checkpoint["config"].items() if k in names})
+    config = PriorConfig(
+        **{k: v for k, v in checkpoint["config"].items() if k in names}
+    )
     config.validate_online_contract()
-    tokenizer = MotionAutoencoder(config.feature_dim, config.hidden, config.latent_dim).to(DEVICE)
+    tokenizer = MotionAutoencoder(
+        config.feature_dim, config.hidden, config.latent_dim
+    ).to(DEVICE)
     predictor = ConditionalTransformer(
         latent_dim=config.latent_dim,
         future_tokens=1,
@@ -54,7 +58,12 @@ def load_models(path: Path):
         heads=config.transformer_heads,
     ).to(DEVICE)
     decoder = FeedbackActionDecoder(
-        config.feature_dim, config.latent_dim, config.action_dim, config.hidden
+        config.feature_dim,
+        config.latent_dim,
+        config.action_dim,
+        config.hidden,
+        config.action_parameterization,
+        config.previous_mean_coefficient,
     ).to(DEVICE)
     tokenizer.load_state_dict(checkpoint["tokenizer"])
     predictor.load_state_dict(checkpoint["predictor"])
@@ -76,7 +85,9 @@ def evaluate(checkpoint_path: Path, dataset_root: Path, split: str) -> dict:
     dataset = load_split(split, dataset_root, expected_variant=dataset_variant)
     feature_mean = torch.as_tensor(checkpoint["feature_mean"], device=DEVICE)
     feature_std = torch.as_tensor(checkpoint["feature_std"], device=DEVICE)
-    features = (torch.as_tensor(dataset.features, device=DEVICE) - feature_mean) / feature_std
+    features = (
+        torch.as_tensor(dataset.features, device=DEVICE) - feature_mean
+    ) / feature_std
     controls = torch.as_tensor(dataset.normalized_control, device=DEVICE)
     tokens = encode_in_batches(tokenizer, features)
     token_mean = torch.as_tensor(checkpoint["token_mean"], device=DEVICE)
@@ -94,7 +105,11 @@ def evaluate(checkpoint_path: Path, dataset_root: Path, split: str) -> dict:
         torch.roll(normalized_command, len(windows.anchors), dims=0),
     )
     shuffled_command_mse = F.mse_loss(shuffled_prediction, windows.future[:, :1]).item()
-    predicted_plan = prediction[:, 0].repeat_interleave(ACTION_PHASES, dim=0)
+    action_prediction = predictor.predict(
+        windows.action_history,
+        (windows.action_anchor_command - command_mean) / command_std,
+    )
+    predicted_plan = action_prediction[:, 0].repeat_interleave(ACTION_PHASES, dim=0)
     action = _action_metrics(
         decoder, windows, predicted_plan, command_mean, command_std
     )
@@ -135,7 +150,8 @@ def evaluate(checkpoint_path: Path, dataset_root: Path, split: str) -> dict:
         "state_beats_persistence": report["state_skill_over_persistence"] > 0.0,
         "command_is_informative": report["matching_command_win"] > 0.5,
         "action_beats_zero": report["action_mse"] < report["action_zero_control_mse"],
-        "plan_is_informative": report["action_shuffled_plan_mse"] > report["action_mse"],
+        "plan_is_informative": report["action_shuffled_plan_mse"]
+        > report["action_mse"],
         "closed_loop_beats_repeated_control": (
             report["action_closed_loop_skill_over_repeated_initial"] > 0.0
         ),
@@ -147,9 +163,7 @@ def evaluate(checkpoint_path: Path, dataset_root: Path, split: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--checkpoint", type=Path, default=OUT / "prior_retime_1p75.pt"
-    )
+    parser.add_argument("--checkpoint", type=Path, default=OUT / "prior_retime_1p75.pt")
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--split", choices=("validation", "test"), default="test")
     parser.add_argument("--output", type=Path)
