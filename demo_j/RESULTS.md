@@ -66,9 +66,11 @@ source-supported 1.26 seconds; it is not evidence for indefinite locomotion.
 ### Native finite-trial RSM/RSA
 
 Three independently trained SNN seeds and the 18 frozen Demo H beta-sweep
-checkpoints receive the same 30 fixed trials: six speeds, five repeats, and 63
-bins per trial. The SNN resets at every trial. Its exact 209-D input is used as
-the nuisance geometry:
+checkpoints receive the same 30 fixed trials: six speeds, five repeats, and all
+64 state frames per trial. The SNN resets at every trial. It updates once at
+each state frame; the terminal readout is recorded for activity alignment but
+is never applied to physics. Its exact 209-D input is used as the nuisance
+geometry:
 
 ```text
 body state                         60
@@ -85,12 +87,12 @@ samples in every repeat. Crossed-seed means are:
 
 | beta | RSA | 200 ms delay | Exact-input partial RSA | Partial delay |
 |---:|---:|---:|---:|---:|
-| 0 | **.804** | .713 | **.318** | .076 |
-| .025 | .759 | .705 | .248 | .121 |
-| .05 | .728 | .706 | .221 | .054 |
-| .075 | .644 | .641 | -.124 | -.138 |
-| .10 | .675 | .633 | -.086 | -.138 |
-| .15 | .592 | .676 | -.240 | -.028 |
+| 0 | **.806** | .718 | **.325** | .095 |
+| .025 | .767 | .702 | .280 | .120 |
+| .05 | .734 | .702 | .242 | .057 |
+| .075 | .653 | .643 | -.103 | -.129 |
+| .10 | .681 | .636 | -.073 | -.132 |
+| .15 | .593 | .677 | -.241 | -.028 |
 
 This finite-trial correction preserves the qualitative negative result but
 narrows its interpretation. Beta zero has the highest mean alignment, and
@@ -101,9 +103,14 @@ and three seeds per model, so the curves are descriptive rather than a precise
 monotonic dose-response estimate.
 
 Excluding the top input-weight-norm quartile raises beta-zero RSA/partial RSA
-to `.847/.364` and leaves beta zero highest. The result is therefore not
+to `.847/.381` and leaves beta zero highest. The result is therefore not
 created by a few input-proximal neurons. Final artifacts are
 `out/aligned/beta_rsa_native.{json,npz}` and `out/aligned/rsa_native/`.
+
+Relative to the provisional 63-transition-bin analysis, including the terminal
+state changes the beta means by at most `.0083` for raw RSA and `.0322` for
+partial RSA. The qualitative ordering is therefore insensitive to this final
+state-alignment correction.
 
 ## Rejected periodic experiment
 

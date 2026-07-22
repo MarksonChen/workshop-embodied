@@ -185,6 +185,7 @@ def _future_tokens(
     features: np.ndarray,
     tokenizer: MotionTokenizer,
     preview_tokens: int,
+    steps: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Encode only in-clip future blocks and return their explicit mask."""
 
@@ -192,7 +193,8 @@ def _future_tokens(
     clips, frames, channels = features.shape
     if channels != FEATURE_DIM or frames < 2:
         raise ValueError(features.shape)
-    steps = frames - 1
+    if not 1 <= steps <= frames:
+        raise ValueError((steps, frames))
     tokens = np.zeros((clips, steps, preview_tokens, TOKEN_DIM), np.float32)
     mask = np.zeros((clips, steps, preview_tokens), np.float32)
     for time_index in range(steps):
@@ -221,16 +223,18 @@ def clip_observations(
     previous_action = np.asarray(previous_action, np.float32)
     command = np.asarray(command, np.float32)
     clips, frames, channels = features.shape
-    steps = frames - 1
     if channels != FEATURE_DIM:
         raise ValueError(features.shape)
-    if previous_action.shape != (clips, steps, ACTION_DIM):
+    if previous_action.ndim != 3 or previous_action.shape[:1] != (clips,):
+        raise ValueError(previous_action.shape)
+    steps = previous_action.shape[1]
+    if previous_action.shape != (clips, steps, ACTION_DIM) or not 1 <= steps <= frames:
         raise ValueError(previous_action.shape)
     if command.shape == (clips, COMMAND_DIM):
         command = np.broadcast_to(command[:, None], (clips, steps, COMMAND_DIM))
     if command.shape != (clips, steps, COMMAND_DIM):
         raise ValueError(command.shape)
-    preview, preview_mask = _future_tokens(features, tokenizer, preview_tokens)
+    preview, preview_mask = _future_tokens(features, tokenizer, preview_tokens, steps)
     observation = np.concatenate(
         (
             features[:, :steps],

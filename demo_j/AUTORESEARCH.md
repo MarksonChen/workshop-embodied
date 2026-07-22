@@ -138,7 +138,8 @@ first state.
 - Train with full 63-step backpropagation through time and sample native clips
   uniformly.
 - Evaluate physical imitation only over the native clip duration.
-- Record SNN and Demo H activity on matched 63-bin finite trials for RSA.
+- Record SNN and Demo H activity on all 64 matched state frames for RSA. At the
+  terminal state, record the SNN update but discard its unused action readout.
 - Keep speed, contact, RSA, and naturalness metrics out of training and model
   selection.
 - Do not restore long-horizon PPO without genuinely continuous references or a
@@ -155,10 +156,16 @@ rejected rather than treated as baselines for the replacement experiment.
 | `native-seed1` | same, 40.5 s | best validation MSE `.008775` | Select for physical test/video |
 | `native-seed2` | same, 40.2 s | validation MSE `.008796` | Keep for crossed-seed analysis |
 | `native-test` | all 342 held-out clips | 100% finite-episode completion; median joint RMSE `.0722 rad`, speed MAE `.1047` | Accept within the 1.26 s clip boundary |
-| `native-rsa` | 3 SNN x 18 H checkpoints, 10 conditions | beta-zero mean RSA `.804`, exact-input partial `.318`; both decrease overall with beta | Reject the higher-beta similarity hypothesis |
-| `native-exclude-input-q4` | retain 192/256 neurons | beta-zero `.847/.364` and remains highest | Not an input-proximity artifact |
+| `native-rsa-64` | 3 SNN x 18 H checkpoints, 10 conditions | beta-zero mean RSA `.806`, exact-input partial `.325`; both decrease overall with beta | Reject the higher-beta similarity hypothesis |
+| `native-exclude-input-q4-64` | retain 192/256 neurons | beta-zero `.847/.381` and remains highest | Not an input-proximity artifact |
 
-The native RSA uses the first 63 bins of 30 healthy fixed Demo H trials, resets
-the SNN for each trial, and controls all 209 raw SNN inputs. Its ten estimable
-speed-by-contact conditions and three seeds per model support a descriptive
-ordering, not a precise dose-response or mechanistic claim.
+The native RSA uses all 64 state frames of 30 healthy fixed Demo H trials,
+resets the SNN for each trial, and controls all 209 raw SNN inputs. There are
+still only 63 physical transitions; the 64th SNN action readout is explicitly
+unused. Its ten estimable speed-by-contact conditions and three seeds per model
+support a descriptive ordering, not a precise dose-response or mechanistic
+claim.
+
+Adding the terminal state changes crossed-seed beta means by at most `.0083`
+for raw RSA and `.0322` for exact-input-partial RSA relative to the provisional
+63-bin calculation; the qualitative conclusion is unchanged.

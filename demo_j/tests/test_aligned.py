@@ -9,6 +9,7 @@ from demo_j.control.aligned import (
     MotionTokenizer,
     aligned_input_dim,
     build_clip_sequences,
+    clip_observations,
     select_speed_examples,
 )
 from demo_j.data.dataset import ReferenceSet
@@ -97,6 +98,33 @@ def test_future_tail_is_zeroed_and_explicitly_masked() -> None:
         sequences.observation[:, :, token_stop : token_stop + 4],
         sequences.preview_mask,
     )
+
+
+def test_terminal_state_probe_adds_a_frame_without_a_transition() -> None:
+    reference = _reference()
+    previous_action = np.concatenate(
+        (
+            np.zeros((reference.clips, 1, 10), np.float32),
+            reference.teacher_action,
+        ),
+        axis=1,
+    )
+    observation, mask = clip_observations(
+        reference.features,
+        previous_action,
+        reference.command,
+        _tokenizer(),
+        preview_tokens=4,
+    )
+    assert observation.shape == (
+        reference.clips,
+        reference.frames,
+        aligned_input_dim(4),
+    )
+    np.testing.assert_array_equal(
+        observation[:, -1, PREVIOUS_ACTION_SLICE], reference.teacher_action[:, -1]
+    )
+    assert np.all(mask[:, -1] == 0)
 
 
 def test_speed_selection_returns_distinct_real_clips() -> None:

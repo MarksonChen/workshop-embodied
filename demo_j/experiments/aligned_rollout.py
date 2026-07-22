@@ -237,7 +237,8 @@ def record(
 
     saved, tokenizer, config, params = load_clip_checkpoint(checkpoint)
     preview_tokens = int(saved["preview_tokens"])
-    steps = int(saved["episode_steps"])
+    action_steps = int(saved["episode_steps"])
+    recording_bins = action_steps + 1
     with np.load(trace) as archive:
         h_observation = np.asarray(archive["observation"], np.float32)
         feature = np.asarray(archive["feature"], np.float32)
@@ -245,19 +246,19 @@ def record(
         target_speed = np.asarray(archive["target_speed"], np.float32)
         reset_seed = np.asarray(archive["reset_seed"], np.int32)
     episodes, frames = feature.shape[:2]
-    if frames < steps + 1:
-        raise ValueError(f"trace has {frames} frames; {steps + 1} required")
+    if frames < recording_bins:
+        raise ValueError(f"trace has {frames} frames; {recording_bins} required")
     previous_action = np.concatenate(
         (
             np.zeros((episodes, 1, ACTION_DIM), np.float32),
-            driver_action[:, : steps - 1],
+            driver_action[:, :action_steps],
         ),
         axis=1,
     )
     static, preview_mask = clip_observations(
-        feature[:, : steps + 1],
+        feature[:, :recording_bins],
         previous_action,
-        h_observation[:, :steps, COMMAND_SLICE],
+        h_observation[:, :recording_bins, COMMAND_SLICE],
         tokenizer,
         preview_tokens=preview_tokens,
     )
@@ -292,6 +293,9 @@ def record(
         output,
         behavior=behavior.astype(np.float32),
         action=action.astype(np.float32),
+        action_applied_to_physics=np.concatenate(
+            (np.ones(action_steps, np.uint8), np.zeros(1, np.uint8))
+        ),
         spikes_5ms=spikes.astype(np.uint8),
         spike_counts_20ms=counts,
         preview_mask=preview_mask.astype(np.uint8),
@@ -304,14 +308,17 @@ def record(
     )
     normalized = (behavior - np.asarray(mean)) / np.asarray(std)
     report = {
-        "schema": "demo-j-native-clip-fixed-trajectory-recording-v1",
+        "schema": "demo-j-native-clip-fixed-trajectory-recording-v2",
         "checkpoint": str(checkpoint),
         "checkpoint_sha256": sha256(checkpoint),
         "snn_seed": int(saved["seed"]),
         "trace": str(trace),
         "trace_sha256": sha256(trace),
         "episodes": episodes,
-        "bins_per_episode": steps,
+        "bins_per_episode": recording_bins,
+        "state_frames_per_episode": recording_bins,
+        "physical_actions_per_native_clip": action_steps,
+        "terminal_probe_action_used": False,
         "clock_ms": 20,
         "preview_tokens": preview_tokens,
         "valid_preview_fraction": float(preview_mask.mean()),
@@ -319,6 +326,7 @@ def record(
         "silent_neuron_fraction": float(np.mean(counts.sum(axis=(0, 1)) == 0)),
         "normalization_clip_fraction": float(np.mean(np.abs(normalized) > 10)),
         "behavior_array_is_exact_raw_snn_input": True,
+        "activity_alignment": "one SNN update at each of 64 saved state frames",
         "recurrent_state_reset_at_each_native_length_trial": True,
         "periodic_extension_used": False,
         "demo_h_policy_used_for_snn_training": False,

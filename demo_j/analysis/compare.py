@@ -104,6 +104,8 @@ def compare(
     recording_steps = set()
     for path in recordings:
         metadata = _metadata(path)
+        if metadata.get("schema") != "demo-j-native-clip-fixed-trajectory-recording-v2":
+            raise ValueError(f"{path} is not a 64-frame native recording")
         if metadata["trace_sha256"] != trace_hash:
             raise ValueError(f"recording/trace mismatch for {path}")
         with np.load(path) as archive:
@@ -132,6 +134,14 @@ def compare(
                 "checkpoint": metadata["checkpoint"],
                 "checkpoint_sha256": metadata["checkpoint_sha256"],
                 "snn_seed": int(metadata["snn_seed"]),
+                "recording_schema": metadata["schema"],
+                "state_frames_per_episode": int(metadata["state_frames_per_episode"]),
+                "physical_actions_per_native_clip": int(
+                    metadata["physical_actions_per_native_clip"]
+                ),
+                "terminal_probe_action_used": bool(
+                    metadata["terminal_probe_action_used"]
+                ),
                 "neurons_retained": int(retained_neurons.sum()),
                 "neurons_total": int(len(retained_neurons)),
             }
@@ -260,7 +270,7 @@ def compare(
         h_seed=np.asarray([row["seed"] for row in activation_rows]),
     )
     report = {
-        "schema": "demo-j-rsm-rsa-v1",
+        "schema": "demo-j-rsm-rsa-v2",
         "status": "secondary fixed-input representational analysis",
         "trace": str(trace),
         "trace_sha256": trace_hash,
@@ -274,6 +284,11 @@ def compare(
         "minimum_bins_per_condition_repeat": MINIMUM_BINS_PER_REPEAT,
         "conditions": design.conditions,
         "repeats": design.repeats,
+        "state_frames_per_trial": steps,
+        "frame_action_alignment": (
+            "64 state-aligned SNN updates and Demo H activation frames; "
+            "the terminal SNN action readout is recorded but never applied"
+        ),
         "condition_rows": [
             {"speed_m_s": float(speed), "contact_pattern": int(pattern)}
             for speed, pattern in zip(design.speed, design.contact_pattern, strict=True)

@@ -113,13 +113,13 @@ def _draw_curve(ax, values, delayed, *, betas, color, title, ylabel, random):
 
 def plot(report_path: Path, output_dir: Path) -> dict[str, object]:
     report = json.loads(Path(report_path).read_text())
-    if report.get("schema") != "demo-j-rsm-rsa-v1":
+    if report.get("schema") != "demo-j-rsm-rsa-v2":
         raise ValueError(report.get("schema"))
     arrays, betas, snn_seeds, h_seeds = _arrays(report)
     exact_input_control = "exact raw" in report.get("behavior_control", "")
     random = np.random.default_rng(20_260_721)
     summary = {
-        "schema": "demo-j-rsm-rsa-summary-v1",
+        "schema": "demo-j-rsm-rsa-summary-v2",
         "source": str(report_path),
         "betas": betas.tolist(),
         "snn_seeds": list(snn_seeds),
@@ -176,7 +176,7 @@ def plot(report_path: Path, output_dir: Path) -> dict[str, object]:
         frameon=False,
     )
     figure.suptitle(
-        "Demo J RSM/RSA on matched speed × contact conditions",
+        "Demo J 64-frame RSM/RSA on matched speed × contact conditions",
         fontsize=13,
         fontweight="bold",
         y=0.985,

@@ -32,7 +32,8 @@ and the append-only [AUTORESEARCH.md](AUTORESEARCH.md).
 - Independence: no Demo H policy, hidden activation, beta value, or biological
   spike is used to train or select the SNN.
 - Analysis: compare population geometry rather than aligning units one-to-one;
-  use exact SNN input and a 200 ms delayed Demo H control.
+  use all 64 state-aligned frames, exact SNN input, and a 200 ms delayed Demo H
+  control. The terminal SNN readout is measured but never applied as an action.
 - Naturalness and neural similarity are validation measurements, never rewards.
 
 ## Supported workflows
