@@ -242,6 +242,33 @@ The renderer reuses static scenes, renders every second 50 Hz physics frame at
 evaluation takes about 20 seconds including startup instead of about 45
 seconds with six separate compilations.
 
+Use the same renderer to inspect the deterministic mean of the frozen prior
+before PPO. This is the necessary positive control for interpreting stronger
+reference KL as naturalness:
+
+```bash
+env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu \
+  uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax==0.4.30' \
+  --with 'jaxlib==0.4.30' --with 'scipy>=1.15' \
+  python -m demo_h.evaluate_physics \
+  --speeds 1.5 2.0 2.5 3.0 3.5 4.0 \
+  --output-dir demo_h/out/prior_speed_sweep
+
+env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu \
+  uv run --no-project --isolated \
+  --with 'brax==0.12.3' --with 'jax==0.4.30' \
+  --with 'jaxlib==0.4.30' --with 'scipy>=1.15' \
+  --with 'imageio[ffmpeg]' --with pillow \
+  python -m demo_h.render_speed_comparison \
+  demo_h/out/prior_speed_sweep/metrics.json \
+  --columns 6 \
+  --output demo_h/out/prior_speed_sweep/comparison.mp4
+```
+
+The full causal/deployment/KL review and its claim boundary are recorded in
+[`experiment/PRETRAINING_AUDIT.md`](experiment/PRETRAINING_AUDIT.md).
+
 The metrics JSON names speeds in **Fetch units/s** and displacement in **Fetch
 units**. These are simulator coordinates, not biological m/s. Contact,
 cadence, stride, cyclicity, and other gait values in this report are

@@ -13,8 +13,10 @@ import numpy as np
 from brax.v1.envs import fetch
 
 from demo_f.commands import hindsight_command
+from demo_f.features import SL
 from demo_f.jax_features import contact_flags, transition_feature
 from demo_f.kinematics import fetch_feet
+from demo_f.metrics import four_limb_contact_metrics, four_limb_locomotion_metrics
 from demo_h.config import (
     ACTION_DIM,
     BUFFER_FRAMES,
@@ -36,9 +38,7 @@ def _feature(sys, previous_qp, qp, info):
     angles, _ = sys.joints[0].angle_vel(qp)
     previous_feet = fetch_feet(previous_angles)
     feet = fetch_feet(angles)
-    foot_indices = jnp.asarray(
-        tuple(sys.body.index[name] for name in FETCH_FOOT_NAMES)
-    )
+    foot_indices = jnp.asarray(tuple(sys.body.index[name] for name in FETCH_FOOT_NAMES))
     contacts = contact_flags(info.contact.vel, foot_indices)
     return transition_feature(
         previous_qp.pos[0],
@@ -80,7 +80,7 @@ def make_rollout(sys, prior, steps: int):
                 control,
                 plan,
                 next_phase,
-            ), (next_qp, control, contacts, plan)
+            ), (next_qp, control, contacts, plan, feature)
 
         return jax.lax.scan(
             step,
@@ -180,16 +180,16 @@ def standing_reset(env, command: np.ndarray):
 
 
 def summarize(initial_qp, stream) -> tuple[dict, dict[str, np.ndarray]]:
-    qps, controls, contacts, plans = stream
+    qps, controls, contacts, plans, features = stream
     qps = jax.tree_util.tree_map(np.asarray, qps)
-    controls, contacts, plans = map(np.asarray, (controls, contacts, plans))
+    controls, contacts, plans, features = map(
+        np.asarray, (controls, contacts, plans, features)
+    )
     root = np.concatenate((np.asarray(initial_qp.pos[0])[None], qps.pos[:, 0]))
     quaternion = np.concatenate((np.asarray(initial_qp.rot[0])[None], qps.rot[:, 0]))
     speed = np.diff(root[:, 0]) / DT
     upright = 1.0 - 2.0 * (quaternion[:, 1] ** 2 + quaternion[:, 2] ** 2)
-    alive = np.cumprod(
-        ((root[:, 2] >= 0.6875) & (upright >= 0.0)).astype(np.float32)
-    )
+    alive = np.cumprod(((root[:, 2] >= 0.6875) & (upright >= 0.0)).astype(np.float32))
     alive_steps = max(int(alive[1:].sum()), 1)
     switches = np.abs(np.diff(contacts.astype(np.float32), axis=0)).sum(axis=0)
     report = {
@@ -203,9 +203,7 @@ def summarize(initial_qp, stream) -> tuple[dict, dict[str, np.ndarray]]:
         "action_saturation_fraction": float(np.mean(np.abs(controls) >= 0.999)),
         "contact_switches_per_foot": switches.tolist(),
         "passes_survival": bool(alive[-1] > 0),
-        "passes_locomotion": bool(
-            alive[-1] > 0 and root[-1, 0] - root[0, 0] > 0.25
-        ),
+        "passes_locomotion": bool(alive[-1] > 0 and root[-1, 0] - root[0, 0] > 0.25),
     }
     trace = {
         "qp_pos": qps.pos,
@@ -219,11 +217,85 @@ def summarize(initial_qp, stream) -> tuple[dict, dict[str, np.ndarray]]:
         "controls": controls,
         "contacts": contacts.astype(np.uint8),
         "plans": plans,
+        "features": features,
         "speed": speed,
         "height": root[:, 2],
         "upright": upright,
     }
     return report, trace
+
+
+def speed_label(speed: float) -> str:
+    return f"{speed:.3f}".replace(".", "p")
+
+
+def evaluate_speed_sweep(
+    prior_path: Path,
+    *,
+    speeds: tuple[float, ...],
+    steps: int,
+    output_dir: Path,
+) -> dict:
+    """Roll out the frozen pretrained action prior from standing at each speed."""
+
+    prior_path, output_dir = Path(prior_path), Path(output_dir)
+    prior = load_prior(prior_path)
+    env = fetch.Fetch()
+    rollout = make_rollout(env.sys, prior, steps)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for target_speed in speeds:
+        target_speed = float(target_speed)
+        target = np.asarray(
+            (target_speed * COMMAND_HORIZON_SECONDS, 0.0, 0.0), np.float32
+        )
+        qp, buffer, previous, command, _ = standing_reset(env, target)
+        stream = rollout(qp, buffer, previous, command)
+        jax.block_until_ready(stream[1])
+        metrics, trace = summarize(qp, stream)
+        alive = np.cumprod(
+            ((trace["height"][1:] >= 0.6875) & (trace["upright"][1:] >= 0.0)).astype(
+                np.uint8
+            )
+        ).astype(bool)
+        if not np.any(alive):
+            alive = np.ones(steps, dtype=bool)
+        features = trace["features"]
+        contacts = features[:, slice(*SL["contacts"])]
+        trace_path = output_dir / (f"prior_command-{speed_label(target_speed)}ups.npz")
+        np.savez_compressed(trace_path, **trace)
+        row = {
+            "commanded_speed_fetch_units_per_s": target_speed,
+            "realized_speed_mean_fetch_units_per_s": float(
+                trace["speed"][alive].mean()
+            ),
+            "realized_speed_std_fetch_units_per_s": float(trace["speed"][alive].std()),
+            "forward_displacement_fetch_units": metrics["forward_displacement"],
+            "trace": str(trace_path),
+            "four_limb_gait": four_limb_contact_metrics(contacts[alive]),
+            "four_limb_stride": four_limb_locomotion_metrics(features[alive]),
+            **metrics,
+        }
+        rows.append(row)
+        print(json.dumps(row), flush=True)
+    report = {
+        "schema": "demo-h-speed-sweep-v2",
+        "arm": "p0",
+        "label": "frozen pretrained prior (no PPO)",
+        "prior": str(prior_path),
+        "steps": steps,
+        "seconds": steps * DT,
+        "reset": "ordinary standing reset",
+        "note": (
+            "Positive-control rollout of the frozen pretrained action prior; "
+            "no PPO policy or task reward is used. Gait diagnostics are validation-only."
+        ),
+        "speeds": rows,
+    }
+    output = output_dir / "metrics.json"
+    output.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"wrote {output}", flush=True)
+    return report
 
 
 def main() -> None:
@@ -232,8 +304,22 @@ def main() -> None:
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--steps", type=int, default=250)
     parser.add_argument("--target-speed", type=float, default=TARGET_SPEED_FETCH)
+    parser.add_argument(
+        "--speeds",
+        type=float,
+        nargs="+",
+        help="Evaluate a standing-reset frozen-prior speed sweep instead",
+    )
     parser.add_argument("--output-dir", type=Path, default=OUT / "p0")
     args = parser.parse_args()
+    if args.speeds:
+        evaluate_speed_sweep(
+            args.prior,
+            speeds=tuple(args.speeds),
+            steps=args.steps,
+            output_dir=args.output_dir,
+        )
+        return
     prior = load_prior(args.prior)
     env = fetch.Fetch()
     target = np.asarray(
@@ -266,10 +352,10 @@ def main() -> None:
     report["passes_in_support_gate"] = report["resets"]["in_support"][
         "passes_locomotion"
     ]
-    report["passes_workshop_gate"] = report["resets"]["standing"][
-        "passes_locomotion"
-    ]
-    (args.output_dir / "evaluation.json").write_text(json.dumps(report, indent=2) + "\n")
+    report["passes_workshop_gate"] = report["resets"]["standing"]["passes_locomotion"]
+    (args.output_dir / "evaluation.json").write_text(
+        json.dumps(report, indent=2) + "\n"
+    )
     print(json.dumps(report, indent=2))
 
 
