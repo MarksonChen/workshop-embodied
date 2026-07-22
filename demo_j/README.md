@@ -74,10 +74,12 @@ MUJOCO_GL=egl uv run python -m demo_j.cli render-aligned \
   --output demo_j/out/aligned/snn_native_clip_speed_sweep.mp4
 ```
 
-This workflow evaluates only the duration supported by each source clip. It
-does not manufacture a long reference by repeating a short segment. A genuine
-long-horizon experiment requires genuinely continuous references or a separate
-trajectory generator and is outside the current data contract.
+This workflow audits every held-out test clip in one batched rollout and stores
+six speed-matched examples for the video. It evaluates only the duration
+supported by each source clip and does not manufacture a long reference by
+repeating a short segment. A genuine long-horizon experiment requires genuinely
+continuous references or a separate trajectory generator and is outside the
+current data contract.
 
 The `analysis` bridge is invoked through `export-h-trace` and
 `export-h-activations` in Demo H's isolated legacy environment. It exports one
@@ -92,7 +94,7 @@ uv run python -m demo_j.cli record-aligned \
 uv run python -m demo_j.cli compare-rsa \
   --recording demo_j/out/aligned/snn_native_fixed_seed[012].npz \
   --trace demo_j/out/aligned/h_native_trace_64.npz \
-  --activation demo_j/out/aligned/*_activations.npz \
+  --activation demo_j/out/aligned/demo-j-beta-v1_*_native_activations.npz \
   --output demo_j/out/aligned/beta_rsa_native.json --permutations 1000
 uv run python -m demo_j.cli plot-rsa \
   --report demo_j/out/aligned/beta_rsa_native.json \
@@ -136,13 +138,18 @@ implementation details rather than additional workshop entry points.
 
 ## Current boundary
 
-The accepted 58-step SNN closely imitates held-out references. The previous
-1,000-bin aligned workflow and its readout PPO are rejected: they repeated a
-short segment, created discontinuities at every wrap, and roughly half of the
-showcased physical rollouts failed partway. Their old RSA result is also not a
-current result because the synthetic periodic input was out of contract. The
-replacement uses finite native clips and must be retrained and re-evaluated
-before a new beta/RSA conclusion is reported.
+Both finite-clip SNN workflows now closely imitate held-out references. The
+native token-conditioned seed selected by validation completes all 342 test
+clips over their supported 1.26-second duration. Its matched finite-trial RSA
+does not support the proposed “higher beta is more SNN-like” ordering: beta
+zero has the highest crossed-seed mean, with substantial uncertainty across
+the three Demo H seeds. This is a short-episode imitation and descriptive
+representation result, not evidence for indefinite locomotion or a biological
+mechanism.
+
+The previous 1,000-bin workflow and its readout PPO remain rejected. They
+repeated a short segment, created discontinuities at every wrap, and roughly
+half of the showcased physical rollouts failed partway.
 
 Generated files under `demo_j/out/` are disposable. The retained local set is
 limited to the reference cache, canonical checkpoints/videos, final native

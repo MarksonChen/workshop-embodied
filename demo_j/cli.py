@@ -41,7 +41,7 @@ COMMANDS = {
     ),
     "evaluate-aligned": Command(
         "demo_j.experiments.aligned_rollout",
-        "evaluate six held-out native clips",
+        "audit all test clips and retain six examples",
         ("evaluate",),
     ),
     "record-aligned": Command(

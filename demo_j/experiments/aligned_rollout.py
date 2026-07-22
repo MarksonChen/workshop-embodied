@@ -24,7 +24,6 @@ from demo_j.control.aligned import (
 )
 from demo_j.control.snn import control_step, initial_state
 from demo_j.control.tracking import FetchTracking
-from demo_j.data.dataset import take_references
 from demo_j.data.projection import DEFAULT_ROOT as PROJECTED_ROOT
 from demo_j.data.projection import load_projected_reference
 from demo_j.experiments.aligned import load_clip_checkpoint
@@ -48,7 +47,7 @@ def evaluate(
     speeds: tuple[float, ...],
     output: Path,
 ) -> dict[str, object]:
-    """Track six held-out native clips without extending or wrapping them."""
+    """Audit every test clip and retain six examples for visualization."""
 
     saved, tokenizer, config, params = load_clip_checkpoint(checkpoint)
     reference = load_projected_reference("test", reference_root)
@@ -56,23 +55,22 @@ def evaluate(
         reference, tokenizer, preview_tokens=int(saved["preview_tokens"])
     )
     selected = select_speed_examples(sequences, np.asarray(speeds, np.float32))
-    selected_reference = take_references(reference, selected)
     steps = sequences.steps
     if steps != int(saved["episode_steps"]):
         raise ValueError((steps, saved["episode_steps"]))
 
     environment = FetchTracking(
-        selected_reference,
+        reference,
         random_start=False,
         track_frames=steps,
     )
     reset = jax.jit(jax.vmap(environment.reset_to))
     physics_step = jax.jit(jax.vmap(environment.step))
-    examples = len(selected)
+    examples = reference.clips
     state = reset(jnp.arange(examples, dtype=jnp.int32))
     neuronal_state = initial_state((examples,), config)
     previous_action = jnp.zeros((examples, ACTION_DIM), jnp.float32)
-    template = jnp.asarray(sequences.observation[selected])
+    template = jnp.asarray(sequences.observation)
     mean = jnp.asarray(saved["observation_mean"])
     std = jnp.asarray(saved["observation_std"])
 
@@ -131,8 +129,7 @@ def evaluate(
         )
     ]
     spikes = spikes.transpose(2, 0, 1, 3)
-    qpos = np.concatenate((selected_reference.qpos[:, :1], qpos), axis=1)
-    target_qpos = selected_reference.qpos
+    qpos = np.concatenate((reference.qpos[:, :1], qpos), axis=1)
     measured_speed = _forward_speed(qpos)
     realized_speed = np.asarray(
         [
@@ -141,52 +138,57 @@ def evaluate(
         ],
         np.float32,
     )
-    target_speed = sequences.speed[selected]
+    target_speed = sequences.speed
     contacts = feature[..., slice(*SL["contacts"])] >= 0.5
     contact_switches = np.sum(contacts[:, 1:] != contacts[:, :-1], axis=1)
+    target_contacts = reference.features[:, 1:, slice(*SL["contacts"])] >= 0.5
+    target_contact_switches = np.sum(
+        target_contacts[:, 1:] != target_contacts[:, :-1], axis=1
+    )
     counts = spikes.sum(axis=2)
+    alive_count = np.maximum(alive.sum(axis=1), 1)
+    root_error_mean = (root_error * alive).sum(axis=1) / alive_count
+    joint_rmse_mean = (joint_error / np.sqrt(ACTION_DIM) * alive).sum(
+        axis=1
+    ) / alive_count
+    foot_rmse_mean = (foot_error / np.sqrt(12.0) * alive).sum(axis=1) / alive_count
+    positive_speed = target_speed > 0.05
     rows = []
-    for index, clip in enumerate(selected):
-        alive_mask = alive[index]
-        alive_count = max(int(alive_mask.sum()), 1)
+    for requested, clip in zip(speeds, selected, strict=True):
         rows.append(
             {
-                "requested_speed_fetch_units_per_s": float(speeds[index]),
-                "reference_speed_fetch_units_per_s": float(target_speed[index]),
-                "realized_speed_fetch_units_per_s": float(realized_speed[index]),
+                "requested_speed_fetch_units_per_s": float(requested),
+                "reference_speed_fetch_units_per_s": float(target_speed[clip]),
+                "realized_speed_fetch_units_per_s": float(realized_speed[clip]),
                 "test_clip": int(clip),
-                "completed_native_clip": bool(final_alive[index]),
-                "completion_fraction": float(alive_mask.mean()),
-                "root_error_mean": float(
-                    (root_error[index] * alive_mask).sum() / alive_count
-                ),
-                "joint_rmse_mean_rad": float(
-                    (joint_error[index] / np.sqrt(ACTION_DIM) * alive_mask).sum()
-                    / alive_count
-                ),
-                "foot_rmse_mean": float(
-                    (foot_error[index] / np.sqrt(12.0) * alive_mask).sum() / alive_count
-                ),
-                "contact_switches_per_foot": contact_switches[index].tolist(),
+                "completed_native_clip": bool(final_alive[clip]),
+                "completion_fraction": float(alive[clip].mean()),
+                "root_error_mean": float(root_error_mean[clip]),
+                "joint_rmse_mean_rad": float(joint_rmse_mean[clip]),
+                "foot_rmse_mean": float(foot_rmse_mean[clip]),
+                "contact_switches_per_foot": contact_switches[clip].tolist(),
+                "reference_contact_switches_per_foot": target_contact_switches[
+                    clip
+                ].tolist(),
             }
         )
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         output,
-        qpos=qpos.astype(np.float32),
-        target_qpos=target_qpos.astype(np.float32),
-        action=action.astype(np.float32),
-        spikes_5ms=spikes.astype(np.uint8),
-        spike_counts_20ms=counts.astype(np.uint8),
-        feature=feature.astype(np.float32),
-        measured_speed=measured_speed.astype(np.float32),
-        alive=alive.astype(np.uint8),
-        done=done.astype(np.uint8),
+        qpos=qpos[selected].astype(np.float32),
+        target_qpos=reference.qpos[selected].astype(np.float32),
+        action=action[selected].astype(np.float32),
+        spikes_5ms=spikes[selected].astype(np.uint8),
+        spike_counts_20ms=counts[selected].astype(np.uint8),
+        feature=feature[selected].astype(np.float32),
+        measured_speed=measured_speed[selected].astype(np.float32),
+        alive=alive[selected].astype(np.uint8),
+        done=done[selected].astype(np.uint8),
         selected_clip=selected,
         requested_speed=np.asarray(speeds, np.float32),
-        reference_speed=target_speed.astype(np.float32),
-        realized_speed=realized_speed.astype(np.float32),
+        reference_speed=target_speed[selected].astype(np.float32),
+        realized_speed=realized_speed[selected].astype(np.float32),
     )
     report = {
         "schema": "demo-j-native-clip-rollout-v1",
@@ -195,7 +197,24 @@ def evaluate(
         "steps": steps,
         "seconds": steps / FPS,
         "episodes": rows,
-        "completion_fraction": float(np.mean(final_alive)),
+        "selection_rule": "nearest distinct positive-speed native test clips",
+        "selected_completion_fraction": float(np.mean(final_alive[selected])),
+        "full_test_audit": {
+            "clips": reference.clips,
+            "completion_fraction": float(np.mean(final_alive)),
+            "median_completion_fraction": float(np.median(alive.mean(axis=1))),
+            "median_root_error": float(np.median(root_error_mean)),
+            "median_joint_rmse_rad": float(np.median(joint_rmse_mean)),
+            "median_foot_rmse": float(np.median(foot_rmse_mean)),
+            "median_forward_speed_absolute_error": float(
+                np.median(
+                    np.abs(
+                        realized_speed[positive_speed] - target_speed[positive_speed]
+                    )
+                )
+            ),
+            "positive_speed_clips": int(positive_speed.sum()),
+        },
         "mean_firing_rate_hz": float(counts.mean() * FPS),
         "silent_neuron_fraction": float(np.mean(counts.sum(axis=(0, 1)) == 0)),
         "action_saturation_fraction": float(np.mean(np.abs(action) >= 0.99)),

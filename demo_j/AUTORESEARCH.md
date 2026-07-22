@@ -146,3 +146,19 @@ first state.
 
 The periodic checkpoint, its long-horizon PPO, and its beta/RSA trend are
 rejected rather than treated as baselines for the replacement experiment.
+
+### Replacement experiments
+
+| Run | Budget | Outcome | Decision |
+|---|---:|---|---|
+| `native-seed0` | 2,000 x 256 x 63 bins, 40.5 s | validation MSE `.008826` | Keep for crossed-seed analysis |
+| `native-seed1` | same, 40.5 s | best validation MSE `.008775` | Select for physical test/video |
+| `native-seed2` | same, 40.2 s | validation MSE `.008796` | Keep for crossed-seed analysis |
+| `native-test` | all 342 held-out clips | 100% finite-episode completion; median joint RMSE `.0722 rad`, speed MAE `.1047` | Accept within the 1.26 s clip boundary |
+| `native-rsa` | 3 SNN x 18 H checkpoints, 10 conditions | beta-zero mean RSA `.804`, exact-input partial `.318`; both decrease overall with beta | Reject the higher-beta similarity hypothesis |
+| `native-exclude-input-q4` | retain 192/256 neurons | beta-zero `.847/.364` and remains highest | Not an input-proximity artifact |
+
+The native RSA uses the first 63 bins of 30 healthy fixed Demo H trials, resets
+the SNN for each trial, and controls all 209 raw SNN inputs. Its ten estimable
+speed-by-contact conditions and three seeds per model support a descriptive
+ordering, not a precise dose-response or mechanistic claim.

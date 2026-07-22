@@ -43,8 +43,67 @@ in-clip motion. A token is zeroed and its mask is false whenever its complete
 four-frame block would cross the clip tail. Body state, previous action, future
 motion, and recurrent state never wrap to the first frame.
 
-Training and held-out native-clip results are pending regeneration after this
-contract correction.
+Three 2,000-update seeds use uniform native-clip minibatches and full 63-step
+backpropagation through time. Each run takes about 40.4 seconds on the H100.
+
+| Seed | Best validation action MSE | Time |
+|---:|---:|---:|
+| 0 | .008826 | 40.5 s |
+| 1 | **.008775** | 40.5 s |
+| 2 | .008796 | 40.2 s |
+
+Seed 1 was selected only by validation action MSE. A single batched physical
+audit then evaluated all 342 test clips. It completes every finite episode,
+with median root error `.0757`, joint RMSE `.0722 rad`, foot RMSE `.0694`, and
+forward-speed absolute error `.1047` over the 326 positive-speed clips. It has
+no silent neurons or saturated actions and fires at `29.47 Hz` on average.
+
+The six-example video is `out/aligned/snn_native_clip_speed_sweep.mp4`. For
+reference speeds `[1.51, 2.01, 2.53, 2.86, 3.34, 3.79]`, its realized speeds
+are `[1.04, 2.09, 2.35, 2.88, 3.62, 3.92]`. The recording ends after the
+source-supported 1.26 seconds; it is not evidence for indefinite locomotion.
+
+### Native finite-trial RSM/RSA
+
+Three independently trained SNN seeds and the 18 frozen Demo H beta-sweep
+checkpoints receive the same 30 fixed trials: six speeds, five repeats, and 63
+bins per trial. The SNN resets at every trial. Its exact 209-D input is used as
+the nuisance geometry:
+
+```text
+body state                         60
+autoregressive previous action     10
+8 future tokens x 16              128
+8 token-validity bits               8
+command                              3
+                                   ---
+                                   209
+```
+
+After an eight-bin warmup, ten speed-by-contact conditions have at least five
+samples in every repeat. Crossed-seed means are:
+
+| beta | RSA | 200 ms delay | Exact-input partial RSA | Partial delay |
+|---:|---:|---:|---:|---:|
+| 0 | **.804** | .713 | **.318** | .076 |
+| .025 | .759 | .705 | .248 | .121 |
+| .05 | .728 | .706 | .221 | .054 |
+| .075 | .644 | .641 | -.124 | -.138 |
+| .10 | .675 | .633 | -.086 | -.138 |
+| .15 | .592 | .676 | -.240 | -.028 |
+
+This finite-trial correction preserves the qualitative negative result but
+narrows its interpretation. Beta zero has the highest mean alignment, and
+stronger prior regularization does not make Demo H more SNN-like. Only the
+three lowest-beta conditions have means above their delayed controls after
+partialling the exact SNN input. The analysis has just ten estimable conditions
+and three seeds per model, so the curves are descriptive rather than a precise
+monotonic dose-response estimate.
+
+Excluding the top input-weight-norm quartile raises beta-zero RSA/partial RSA
+to `.847/.364` and leaves beta zero highest. The result is therefore not
+created by a few input-proximal neurons. Final artifacts are
+`out/aligned/beta_rsa_native.{json,npz}` and `out/aligned/rsa_native/`.
 
 ## Rejected periodic experiment
 
@@ -80,8 +139,8 @@ The defensible workshop result is narrow:
 
 - a small differentiable SNN can closely imitate short physically realized
   Fetch motion sequences;
-- the periodic beta/RSA result is invalidated and awaits a native finite-trial
-  replacement;
+- on matched finite trials, higher Demo H beta does not improve similarity to
+  the native-clip SNN; beta zero has the highest crossed-seed mean;
 - the current SNN does not add predictive power for real Coltrane DLS activity;
 - the retired 1,000-step controller failed functional locomotion;
   uninterrupted neural activity is not behavioral success.
