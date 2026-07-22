@@ -46,6 +46,8 @@ def state_action_windows(
     controls: torch.Tensor,
     dataset,
     config: PriorConfig,
+    *,
+    command_mode: str = "episode",
 ) -> StateActionWindows:
     """Build leak-free state and action targets.
 
@@ -54,7 +56,14 @@ def state_action_windows(
     The command begins at that same causal history endpoint.
     """
 
+    if command_mode not in {"episode", "local"}:
+        raise ValueError(f"unsupported command mode {command_mode!r}")
     last_future_anchor = tokens.shape[1] - ACTION_PHASES
+    last_command_anchor = (
+        normalized_features.shape[1] - COMMAND_HORIZON_FRAMES
+    ) // config.downsample
+    if command_mode == "local":
+        last_future_anchor = min(last_future_anchor, last_command_anchor)
     anchors = np.arange(
         config.history_tokens,
         last_future_anchor + 1,
@@ -62,7 +71,7 @@ def state_action_windows(
     )
     action_anchors = np.arange(
         config.history_tokens,
-        tokens.shape[1],
+        (last_command_anchor + 1) if command_mode == "local" else tokens.shape[1],
         dtype=np.int64,
     )
     if not len(anchors) or not len(action_anchors):
@@ -78,19 +87,41 @@ def state_action_windows(
     # convention in every training window: displacement from the causal reset
     # frame over the standard 31-frame horizon.  The former per-anchor command
     # silently shortened training to the first 20 of the 48 deployed actions.
-    command_start = int(command_frames(anchors[:1], config)[0][0])
-    episode_command = hindsight_command(
-        dataset.root_position,
-        dataset.root_quaternion,
-        start=command_start,
-        future=command_start + COMMAND_HORIZON_FRAMES,
-    )
-    commands = np.broadcast_to(
-        episode_command[:, None], (len(tokens), len(anchors), 3)
-    ).copy()
-    action_anchor_commands = np.broadcast_to(
-        episode_command[:, None], (len(tokens), len(action_anchors), 3)
-    ).copy()
+    if command_mode == "episode":
+        command_start = int(command_frames(anchors[:1], config)[0][0])
+        episode_command = hindsight_command(
+            dataset.root_position,
+            dataset.root_quaternion,
+            start=command_start,
+            future=command_start + COMMAND_HORIZON_FRAMES,
+        )
+        commands = np.broadcast_to(
+            episode_command[:, None], (len(tokens), len(anchors), 3)
+        ).copy()
+        action_anchor_commands = np.broadcast_to(
+            episode_command[:, None], (len(tokens), len(action_anchors), 3)
+        ).copy()
+    else:
+        def local_commands(local_anchors: np.ndarray) -> np.ndarray:
+            return np.stack(
+                [
+                    hindsight_command(
+                        dataset.root_position,
+                        dataset.root_quaternion,
+                        start=int(anchor * config.downsample - 1),
+                        future=int(
+                            anchor * config.downsample
+                            - 1
+                            + COMMAND_HORIZON_FRAMES
+                        ),
+                    )
+                    for anchor in local_anchors
+                ],
+                axis=1,
+            )
+
+        commands = local_commands(anchors)
+        action_anchor_commands = local_commands(action_anchors)
     current = []
     previous = []
     target = []

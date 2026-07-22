@@ -51,7 +51,6 @@ from demo_h.config import (
     PD_POSITION_GAIN,
     PD_VELOCITY_GAIN,
     TORQUE_STRENGTH,
-    TRANSITIONS,
 )
 
 from .contract import (
@@ -79,8 +78,11 @@ def _reference_rates(angles: np.ndarray, roots: np.ndarray, quaternions: np.ndar
 class ExactFetchProjector:
     """Batched deterministic pseudo-label generator in exact deployment physics."""
 
-    def __init__(self, batch_size: int = 256):
+    def __init__(self, batch_size: int = 256, clip_frames: int = CLIP_FRAMES):
         self.batch_size = int(batch_size)
+        self.clip_frames = int(clip_frames)
+        if self.clip_frames < 2:
+            raise ValueError("clip_frames must include at least one transition")
         self.env = fetch.Fetch()
         self.sys = self.env.sys
         self.connected = jnp.arange(11)
@@ -169,10 +171,15 @@ class ExactFetchProjector:
                 contact,
             )
 
-        return jax.lax.scan(step, initial_qp, jnp.arange(1, CLIP_FRAMES))
+        return jax.lax.scan(step, initial_qp, jnp.arange(1, self.clip_frames))
 
     def project(self, arrays: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         count = len(arrays["joint_angles"])
+        if arrays["joint_angles"].shape[1] != self.clip_frames:
+            raise ValueError(
+                f"expected {self.clip_frames} frames, got "
+                f"{arrays['joint_angles'].shape[1]}"
+            )
         if count > self.batch_size:
             raise ValueError(f"batch {count} exceeds compiled size {self.batch_size}")
         pad = self.batch_size - count
@@ -282,7 +289,9 @@ class ExactFetchProjector:
             "realized_contacts": realized_contact,
             "normalized_control": control.astype(np.float32),
             "requested_actuator_torque": (-TORQUE_STRENGTH * control).astype(np.float32),
-            "valid_transition_mask": np.ones((count, TRANSITIONS), np.uint8),
+            "valid_transition_mask": np.ones(
+                (count, self.clip_frames - 1), np.uint8
+            ),
             "command": command,
             "initial_qp_pos": np.asarray(initial_qp.pos[:count], np.float32),
             "initial_qp_rot": np.asarray(initial_qp.rot[:count], np.float32),

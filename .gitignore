@@ -64,6 +64,8 @@ demo_h/dataset/release/
 demo_h/dataset/release_direct/
 demo_h/dataset/release_retime_1p75/
 demo_h/dataset/release_snn_controller/
+demo_h/dataset/release_long_reference/
+demo_h/dataset/release_long/
 
 # Demo J checkpoints, recordings, diagnostics, and videos
 demo_j/out/

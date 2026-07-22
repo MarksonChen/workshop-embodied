@@ -33,3 +33,25 @@ def test_token_to_action_alignment_has_no_future_leakage():
     assert windows.command[-1, 0].item() == 31
     assert windows.action_anchor_command[-1, 0].item() == 31
     assert windows.target_control[-4:, 0].tolist() == [59, 60, 61, 62]
+
+
+def test_long_windows_use_continuous_local_commands_without_tail_overrun():
+    config = PriorConfig(latent_dim=2)
+    tokens = torch.arange(64, dtype=torch.float32).view(1, 64, 1).expand(-1, -1, 2)
+    features = torch.arange(256, dtype=torch.float32).view(1, 256, 1).expand(-1, -1, 60)
+    controls = torch.arange(255, dtype=torch.float32).view(1, 255, 1).expand(-1, -1, 10)
+    root = np.zeros((1, 256, 3), np.float32)
+    root[0, :, 0] = np.arange(256)
+    quaternion = np.zeros((1, 256, 4), np.float32)
+    quaternion[..., 0] = 1.0
+    data = SimpleNamespace(root_position=root, root_quaternion=quaternion)
+
+    windows = state_action_windows(
+        tokens, features, controls, data, config, command_mode="local"
+    )
+
+    assert windows.anchors.tolist() == list(range(4, 57))
+    assert windows.action_anchors.tolist() == list(range(4, 57))
+    assert windows.command[0, 0].item() == 31
+    assert windows.command[-1, 0].item() == 31
+    assert windows.target_control[-4:, 0].tolist() == [223, 224, 225, 226]

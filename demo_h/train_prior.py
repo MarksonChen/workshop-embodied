@@ -22,6 +22,7 @@ from demo_f.windows import encode_in_batches
 from demo_h.config import ACTION_PHASES, BUFFER_FRAMES, OUT, PriorConfig
 from demo_h.dataset.contract import DATASET_VARIANT, DEFAULT_ROOT
 from demo_h.dataset.loader import load_manifest, load_split
+from demo_h.dataset.long_sequences import load_split as load_long_split
 from demo_h.models import FeedbackActionDecoder, pre_tanh, tanh_gaussian_nll
 from demo_h.windows import StateActionWindows, state_action_windows
 
@@ -251,10 +252,113 @@ def _closed_loop_action_metrics(
     }
 
 
+def _action_selection_score(metrics: dict) -> float:
+    return (
+        0.25 * metrics["mse"] / metrics["previous_control_mse"]
+        + metrics["closed_loop_mse"] / metrics["repeated_initial_control_mse"]
+    )
+
+
+def _action_sequence(
+    windows: StateActionWindows,
+    predicted_plan: torch.Tensor,
+    command_mean: torch.Tensor,
+    command_std: torch.Tensor,
+    *,
+    clip_batch_size: int,
+) -> dict:
+    steps = len(windows.action_anchors) * ACTION_PHASES
+    if len(windows.target_control) % steps:
+        raise AssertionError("action windows are not complete clip-major sequences")
+    clips = len(windows.target_control) // steps
+    return {
+        "steps": steps,
+        "clips": clips,
+        "clip_batch_size": min(clip_batch_size, clips),
+        "feature": windows.current_feature.view(clips, steps, -1),
+        "true_plan": windows.true_plan.view(clips, steps, -1),
+        "predicted_plan": predicted_plan.view(clips, steps, -1),
+        "previous": windows.previous_control.view(clips, steps, -1),
+        "phase": windows.phase.view(clips, steps, -1),
+        "command": ((windows.action_command - command_mean) / command_std).view(
+            clips, steps, -1
+        ),
+        "target": windows.target_control.view(clips, steps, -1),
+    }
+
+
+def _sequence_action_loss(
+    decoder,
+    sequence: dict,
+    config: PriorConfig,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    clip_index = torch.randint(
+        sequence["clips"],
+        (sequence["clip_batch_size"],),
+        device=DEVICE,
+        generator=generator,
+    )
+    previous = sequence["previous"][clip_index, 0]
+    losses = []
+    for sequence_index in range(sequence["steps"]):
+        true_plan = sequence["true_plan"][clip_index, sequence_index]
+        noisy_true = true_plan + config.plan_noise_std * torch.randn(
+            true_plan.shape, device=DEVICE, generator=generator
+        )
+        choose_prediction = (
+            torch.rand((len(clip_index), 1), device=DEVICE, generator=generator)
+            < config.predicted_plan_probability
+        )
+        plan = torch.where(
+            choose_prediction,
+            sequence["predicted_plan"][clip_index, sequence_index],
+            noisy_true,
+        )
+        target = sequence["target"][clip_index, sequence_index]
+        feature = sequence["feature"][clip_index, sequence_index]
+        if config.feature_noise_std:
+            feature = feature + config.feature_noise_std * torch.randn(
+                feature.shape, device=DEVICE, generator=generator
+            )
+        phase = sequence["phase"][clip_index, sequence_index]
+        command = sequence["command"][clip_index, sequence_index]
+        action_mean = decoder(feature, plan, previous, phase, command)
+        teacher_mean = decoder(
+            feature,
+            plan,
+            sequence["previous"][clip_index, sequence_index],
+            phase,
+            command,
+        )
+        losses.append(
+            0.5 * F.mse_loss(action_mean, pre_tanh(target))
+            + 0.5 * F.mse_loss(teacher_mean, pre_tanh(target))
+        )
+        predicted_control = torch.tanh(action_mean).detach()
+        use_prediction = (
+            torch.rand((len(clip_index), 1), device=DEVICE, generator=generator)
+            < config.predicted_previous_control_probability
+        )
+        previous = torch.where(use_prediction, predicted_control, target)
+    return torch.stack(losses).mean()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--dataset-variant", default=DATASET_VARIANT)
+    parser.add_argument(
+        "--long-dataset-root",
+        type=Path,
+        help="optional continuous 256-frame exact-physics supplement",
+    )
+    parser.add_argument(
+        "--long-sequence-probability",
+        type=float,
+        default=0.5,
+        help="fraction of action updates drawn from continuous long clips",
+    )
     parser.add_argument("--output", type=Path, default=OUT / "prior_retime_1p75.pt")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -318,6 +422,12 @@ def main() -> None:
         feature_noise_std=args.feature_noise_std,
     )
     config.validate_online_contract()
+    if not 0.0 <= args.long_sequence_probability <= 1.0:
+        raise ValueError("long-sequence probability must be in [0,1]")
+    if args.long_dataset_root is not None and config.planner_rollout_tokens != ACTION_PHASES:
+        raise ValueError(
+            "continuous supplement currently uses four-token local planner windows"
+        )
     seed_everything(args.seed)
     manifest = load_manifest(args.dataset_root, expected_variant=args.dataset_variant)
     train = load_split(
@@ -326,8 +436,19 @@ def main() -> None:
     validation = load_split(
         "validation", args.dataset_root, expected_variant=args.dataset_variant
     )
+    long_train = (
+        load_long_split("train", args.long_dataset_root)
+        if args.long_dataset_root is not None
+        else None
+    )
+    long_validation = (
+        load_long_split("validation", args.long_dataset_root)
+        if args.long_dataset_root is not None
+        else None
+    )
     print(
         f"Demo H data train={len(train.features):,} validation={len(validation.features):,} "
+        f"long_train={len(long_train.features) if long_train is not None else 0:,} "
         f"device={DEVICE}",
         flush=True,
     )
@@ -343,8 +464,28 @@ def main() -> None:
     validation_features = torch.from_numpy(
         (validation.features - feature_mean_np) / std
     ).to(DEVICE)
+    long_train_features = (
+        torch.from_numpy((long_train.features - feature_mean_np) / std).to(DEVICE)
+        if long_train is not None
+        else None
+    )
+    long_validation_features = (
+        torch.from_numpy((long_validation.features - feature_mean_np) / std).to(DEVICE)
+        if long_validation is not None
+        else None
+    )
     train_controls = torch.from_numpy(train.normalized_control).to(DEVICE)
     validation_controls = torch.from_numpy(validation.normalized_control).to(DEVICE)
+    long_train_controls = (
+        torch.from_numpy(long_train.normalized_control).to(DEVICE)
+        if long_train is not None
+        else None
+    )
+    long_validation_controls = (
+        torch.from_numpy(long_validation.normalized_control).to(DEVICE)
+        if long_validation is not None
+        else None
+    )
     feature_mean = torch.from_numpy(feature_mean_np).to(DEVICE)
     feature_std = torch.from_numpy(std).to(DEVICE)
     generator = torch.Generator(device=DEVICE).manual_seed(args.seed)
@@ -361,12 +502,17 @@ def main() -> None:
     ).to(DEVICE)
     started = time.perf_counter()
     optimizer = torch.optim.AdamW(tokenizer.parameters(), lr=config.learning_rate)
+    tokenizer_features = (
+        torch.cat((train_features, long_train_features.reshape(-1, 64, config.feature_dim)))
+        if long_train_features is not None
+        else train_features
+    )
     tokenizer.train()
     for step in range(config.tokenizer_steps):
         index = torch.randint(
-            len(train_features), (128,), device=DEVICE, generator=generator
+            len(tokenizer_features), (128,), device=DEVICE, generator=generator
         )
-        target = train_features[index]
+        target = tokenizer_features[index]
         reconstruction = tokenizer(target)
         reconstruction_loss = F.smooth_l1_loss(reconstruction, target)
         safety = joint_limit_loss(reconstruction, feature_mean, feature_std)
@@ -386,16 +532,58 @@ def main() -> None:
     with torch.inference_mode():
         train_tokens = encode_in_batches(tokenizer, train_features)
         validation_tokens = encode_in_batches(tokenizer, validation_features)
-    token_mean = train_tokens.mean(dim=(0, 1))
-    token_std = train_tokens.std(dim=(0, 1)).clamp_min(1e-4)
+        long_train_tokens = (
+            encode_in_batches(tokenizer, long_train_features)
+            if long_train_features is not None
+            else None
+        )
+        long_validation_tokens = (
+            encode_in_batches(tokenizer, long_validation_features)
+            if long_validation_features is not None
+            else None
+        )
+    token_calibration = (
+        torch.cat((train_tokens, long_train_tokens.reshape(-1, 16, config.latent_dim)))
+        if long_train_tokens is not None
+        else train_tokens
+    )
+    token_mean = token_calibration.mean(dim=(0, 1))
+    token_std = token_calibration.std(dim=(0, 1)).clamp_min(1e-4)
     train_tokens = (train_tokens - token_mean) / token_std
     validation_tokens = (validation_tokens - token_mean) / token_std
+    if long_train_tokens is not None:
+        long_train_tokens = (long_train_tokens - token_mean) / token_std
+        long_validation_tokens = (long_validation_tokens - token_mean) / token_std
     tokenizer.requires_grad_(False)
     train_windows = state_action_windows(
         train_tokens, train_features, train_controls, train, config
     )
     validation_windows = state_action_windows(
         validation_tokens, validation_features, validation_controls, validation, config
+    )
+    long_train_windows = (
+        state_action_windows(
+            long_train_tokens,
+            long_train_features,
+            long_train_controls,
+            long_train,
+            config,
+            command_mode="local",
+        )
+        if long_train_tokens is not None
+        else None
+    )
+    long_validation_windows = (
+        state_action_windows(
+            long_validation_tokens,
+            long_validation_features,
+            long_validation_controls,
+            long_validation,
+            config,
+            command_mode="local",
+        )
+        if long_validation_tokens is not None
+        else None
     )
     if args.history_encoding == "rolling_buffer":
         train_windows.history = _rolling_buffer_histories(
@@ -426,8 +614,42 @@ def main() -> None:
             token_mean,
             token_std,
         )
-    command_mean = train_windows.command.mean(dim=0)
-    command_std = train_windows.command.std(dim=0).clamp_min(1e-4)
+        if long_train_windows is not None:
+            long_train_windows.history = _rolling_buffer_histories(
+                tokenizer,
+                long_train_features,
+                long_train_windows.anchors,
+                token_mean,
+                token_std,
+            )
+            long_validation_windows.history = _rolling_buffer_histories(
+                tokenizer,
+                long_validation_features,
+                long_validation_windows.anchors,
+                token_mean,
+                token_std,
+            )
+            long_train_windows.action_history = _rolling_buffer_histories(
+                tokenizer,
+                long_train_features,
+                long_train_windows.action_anchors,
+                token_mean,
+                token_std,
+            )
+            long_validation_windows.action_history = _rolling_buffer_histories(
+                tokenizer,
+                long_validation_features,
+                long_validation_windows.action_anchors,
+                token_mean,
+                token_std,
+            )
+    command_calibration = (
+        torch.cat((train_windows.command, long_train_windows.command))
+        if long_train_windows is not None
+        else train_windows.command
+    )
+    command_mean = command_calibration.mean(dim=0)
+    command_std = command_calibration.std(dim=0).clamp_min(1e-4)
     long_rollout = config.planner_rollout_tokens > ACTION_PHASES
     if long_rollout:
         train_planner_history = train_windows.history.view(
@@ -460,6 +682,8 @@ def main() -> None:
     print(
         f"state windows={len(train_windows.history):,}; "
         f"action targets={len(train_windows.target_control):,}; "
+        f"long state/action={len(long_train_windows.history) if long_train_windows is not None else 0:,}/"
+        f"{len(long_train_windows.target_control) if long_train_windows is not None else 0:,}; "
         f"planner_anchors={train_windows.anchors.tolist()}; "
         f"action_anchors={train_windows.action_anchors.tolist()}",
         flush=True,
@@ -485,16 +709,21 @@ def main() -> None:
             )
             loss = F.mse_loss(prediction, train_planner_future[index])
         else:
+            use_long = (
+                long_train_windows is not None
+                and random.random() < args.long_sequence_probability
+            )
+            active_windows = long_train_windows if use_long else train_windows
             index = torch.randint(
-                len(train_windows.history),
+                len(active_windows.history),
                 (config.batch_size,),
                 device=DEVICE,
                 generator=generator,
             )
-            history = train_windows.history[index]
-            command = (train_windows.command[index] - command_mean) / command_std
+            history = active_windows.history[index]
+            command = (active_windows.command[index] - command_mean) / command_std
             prediction = _predict_rollout(predictor, history, command, ACTION_PHASES)
-            loss = F.mse_loss(prediction, train_windows.future[index])
+            loss = F.mse_loss(prediction, active_windows.future[index])
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
@@ -511,8 +740,28 @@ def main() -> None:
                     config.planner_rollout_tokens,
                 )
             else:
-                validation_mse = _state_mse(
-                    predictor, validation_windows, command_mean, command_std
+                short_validation_mse = _rollout_state_mse(
+                    predictor,
+                    validation_windows.history,
+                    validation_windows.future[:, :1],
+                    (validation_windows.command - command_mean) / command_std,
+                    1,
+                )
+                long_validation_mse = (
+                    _rollout_state_mse(
+                        predictor,
+                        long_validation_windows.history,
+                        long_validation_windows.future[:, :1],
+                        (long_validation_windows.command - command_mean) / command_std,
+                        1,
+                    )
+                    if long_validation_windows is not None
+                    else None
+                )
+                validation_mse = (
+                    0.5 * (short_validation_mse + long_validation_mse)
+                    if long_validation_mse is not None
+                    else short_validation_mse
                 )
             if validation_mse < best_planner_selection_mse:
                 best_planner_selection_mse = validation_mse
@@ -529,6 +778,13 @@ def main() -> None:
     predictor.eval()
     state_validation_mse = _state_mse(
         predictor, validation_windows, command_mean, command_std
+    )
+    long_state_validation_mse = (
+        _state_mse(
+            predictor, long_validation_windows, command_mean, command_std
+        )
+        if long_validation_windows is not None
+        else None
     )
     planner_rollout_validation_mse = (
         _rollout_state_mse(
@@ -553,6 +809,23 @@ def main() -> None:
             validation_windows.action_history,
             (validation_windows.action_anchor_command - command_mean) / command_std,
         )[:, 0].repeat_interleave(ACTION_PHASES, dim=0)
+        long_train_predicted_plan = (
+            predictor.predict(
+                long_train_windows.action_history,
+                (long_train_windows.action_anchor_command - command_mean) / command_std,
+            )[:, 0].repeat_interleave(ACTION_PHASES, dim=0)
+            if long_train_windows is not None
+            else None
+        )
+        long_validation_predicted_plan = (
+            predictor.predict(
+                long_validation_windows.action_history,
+                (long_validation_windows.action_anchor_command - command_mean)
+                / command_std,
+            )[:, 0].repeat_interleave(ACTION_PHASES, dim=0)
+            if long_validation_windows is not None
+            else None
+        )
     if train_predicted_plan.shape != train_windows.true_plan.shape:
         raise AssertionError(
             (train_predicted_plan.shape, train_windows.true_plan.shape)
@@ -581,91 +854,66 @@ def main() -> None:
         command_mean,
         command_std,
     )
+    initial_metrics.update(initial_closed_loop)
+    long_initial_metrics = None
+    if long_validation_windows is not None:
+        long_initial_metrics = _action_metrics(
+            decoder,
+            long_validation_windows,
+            long_validation_predicted_plan,
+            command_mean,
+            command_std,
+        )
+        long_initial_metrics.update(
+            _closed_loop_action_metrics(
+                decoder,
+                long_validation_windows,
+                long_validation_predicted_plan,
+                command_mean,
+                command_std,
+            )
+        )
     best_decoder = copy.deepcopy(decoder.state_dict())
     # One-step control persistence is exceptionally strong at 50 Hz.  It is a
     # useful guardrail but a poor selector: copying one action forever cannot
     # drive the body. Give the causal multi-step rollout four times its weight.
-    best_action_score = (
-        0.25 * initial_metrics["mse"] / initial_metrics["previous_control_mse"]
-        + initial_closed_loop["closed_loop_mse"]
-        / initial_closed_loop["repeated_initial_control_mse"]
+    best_action_score = _action_selection_score(initial_metrics)
+    if long_initial_metrics is not None:
+        best_action_score = 0.5 * (
+            best_action_score + _action_selection_score(long_initial_metrics)
+        )
+    short_sequence = _action_sequence(
+        train_windows,
+        train_predicted_plan,
+        command_mean,
+        command_std,
+        clip_batch_size=max(config.batch_size // ACTION_PHASES, 1),
     )
-    sequence_steps = len(train_windows.action_anchors) * ACTION_PHASES
-    if len(train_windows.target_control) % sequence_steps:
-        raise AssertionError("action windows are not complete clip-major sequences")
-    sequence_count = len(train_windows.target_control) // sequence_steps
-    sequence = {
-        "feature": train_windows.current_feature.view(
-            sequence_count, sequence_steps, -1
-        ),
-        "true_plan": train_windows.true_plan.view(sequence_count, sequence_steps, -1),
-        "predicted_plan": train_predicted_plan.view(sequence_count, sequence_steps, -1),
-        "previous": train_windows.previous_control.view(
-            sequence_count, sequence_steps, -1
-        ),
-        "phase": train_windows.phase.view(sequence_count, sequence_steps, -1),
-        "command": ((train_windows.action_command - command_mean) / command_std).view(
-            sequence_count, sequence_steps, -1
-        ),
-        "target": train_windows.target_control.view(sequence_count, sequence_steps, -1),
-    }
+    long_sequence = (
+        _action_sequence(
+            long_train_windows,
+            long_train_predicted_plan,
+            command_mean,
+            command_std,
+            clip_batch_size=32,
+        )
+        if long_train_windows is not None
+        else None
+    )
     decoder.train()
     for step in range(config.action_steps):
-        clip_index = torch.randint(
-            sequence_count,
-            (max(config.batch_size // ACTION_PHASES, 1),),
-            device=DEVICE,
-            generator=generator,
+        use_long = (
+            long_sequence is not None
+            and random.random() < args.long_sequence_probability
         )
-        previous = sequence["previous"][clip_index, 0]
-        losses = []
-        for sequence_index in range(sequence_steps):
-            true_plan = sequence["true_plan"][clip_index, sequence_index]
-            noisy_true = true_plan + config.plan_noise_std * torch.randn(
-                true_plan.shape, device=DEVICE, generator=generator
-            )
-            choose_prediction = (
-                torch.rand((len(clip_index), 1), device=DEVICE, generator=generator)
-                < config.predicted_plan_probability
-            )
-            plan = torch.where(
-                choose_prediction,
-                sequence["predicted_plan"][clip_index, sequence_index],
-                noisy_true,
-            )
-            target = sequence["target"][clip_index, sequence_index]
-            feature = sequence["feature"][clip_index, sequence_index]
-            if config.feature_noise_std:
-                feature = feature + config.feature_noise_std * torch.randn(
-                    feature.shape, device=DEVICE, generator=generator
-                )
-            action_mean = decoder(
-                feature,
-                plan,
-                previous,
-                sequence["phase"][clip_index, sequence_index],
-                sequence["command"][clip_index, sequence_index],
-            )
-            teacher_mean = decoder(
-                feature,
-                plan,
-                sequence["previous"][clip_index, sequence_index],
-                sequence["phase"][clip_index, sequence_index],
-                sequence["command"][clip_index, sequence_index],
-            )
-            losses.append(
-                0.5 * F.mse_loss(action_mean, pre_tanh(target))
-                + 0.5 * F.mse_loss(teacher_mean, pre_tanh(target))
-            )
-            predicted_control = torch.tanh(action_mean).detach()
-            use_prediction = (
-                torch.rand((len(clip_index), 1), device=DEVICE, generator=generator)
-                < config.predicted_previous_control_probability
-            )
-            previous = torch.where(use_prediction, predicted_control, target)
         # Fixed-variance pre-tanh MSE is Gaussian maximum likelihood. Calibrate
         # diagonal variance after selecting the best mean.
-        loss = torch.stack(losses).mean()
+        loss = _sequence_action_loss(
+            decoder,
+            long_sequence if use_long else short_sequence,
+            config,
+            generator,
+        )
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1.0)
@@ -689,10 +937,26 @@ def main() -> None:
                     command_std,
                 )
             )
-            score = (
-                0.25 * metrics["mse"] / metrics["previous_control_mse"]
-                + metrics["closed_loop_mse"] / metrics["repeated_initial_control_mse"]
-            )
+            score = _action_selection_score(metrics)
+            long_metrics = None
+            if long_validation_windows is not None:
+                long_metrics = _action_metrics(
+                    decoder,
+                    long_validation_windows,
+                    long_validation_predicted_plan,
+                    command_mean,
+                    command_std,
+                )
+                long_metrics.update(
+                    _closed_loop_action_metrics(
+                        decoder,
+                        long_validation_windows,
+                        long_validation_predicted_plan,
+                        command_mean,
+                        command_std,
+                    )
+                )
+                score = 0.5 * (score + _action_selection_score(long_metrics))
             if score < best_action_score:
                 best_action_score = score
                 best_decoder = copy.deepcopy(decoder.state_dict())
@@ -700,7 +964,13 @@ def main() -> None:
             print(
                 f"[action] {completed}/{config.action_steps} loss={loss.item():.5f} "
                 f"val_mse={metrics['mse']:.6f} closed={metrics['closed_loop_mse']:.6f} "
-                f"skill={metrics['closed_loop_skill_over_repeated_initial']:.1%}",
+                f"skill={metrics['closed_loop_skill_over_repeated_initial']:.1%}"
+                + (
+                    f" long_closed={long_metrics['closed_loop_mse']:.6f} "
+                    f"long_skill={long_metrics['closed_loop_skill_over_repeated_initial']:.1%}"
+                    if long_metrics is not None
+                    else ""
+                ),
                 flush=True,
             )
     decoder.load_state_dict(best_decoder)
@@ -728,6 +998,24 @@ def main() -> None:
             command_std,
         )
     )
+    long_action_metrics = None
+    if long_validation_windows is not None:
+        long_action_metrics = _action_metrics(
+            decoder,
+            long_validation_windows,
+            long_validation_predicted_plan,
+            command_mean,
+            command_std,
+        )
+        long_action_metrics.update(
+            _closed_loop_action_metrics(
+                decoder,
+                long_validation_windows,
+                long_validation_predicted_plan,
+                command_mean,
+                command_std,
+            )
+        )
     state_sigma = torch.sqrt(
         torch.tensor(state_validation_mse, device=DEVICE)
     ).clamp_min(1e-3)
@@ -738,7 +1026,21 @@ def main() -> None:
         "state_persistence_mse": persistence_mse,
         "state_skill_over_persistence": 1.0 - state_validation_mse / persistence_mse,
         "planner_rollout_validation_mse": planner_rollout_validation_mse,
+        "long_state_validation_mse": long_state_validation_mse,
         **{f"action_{name}": value for name, value in action_metrics.items()},
+        **(
+            {
+                f"long_action_{name}": value
+                for name, value in long_action_metrics.items()
+            }
+            if long_action_metrics is not None
+            else {}
+        ),
+        "long_sequence_probability": (
+            args.long_sequence_probability
+            if long_train_windows is not None
+            else None
+        ),
         "state_sigma": float(state_sigma),
         "action_log_std": decoder.log_std.detach().cpu().tolist(),
         "history_encoding": args.history_encoding,
@@ -751,6 +1053,11 @@ def main() -> None:
         "seed": args.seed,
         "dataset_manifest_sha256": sha256(args.dataset_root / "manifest.json"),
         "dataset_variant": manifest["variant"],
+        "long_dataset_manifest_sha256": (
+            sha256(args.long_dataset_root / "manifest.json")
+            if args.long_dataset_root is not None
+            else None
+        ),
         "history_encoding": args.history_encoding,
         "feature_mean": feature_mean_np,
         "feature_std": std,
