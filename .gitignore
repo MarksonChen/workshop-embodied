@@ -5,6 +5,9 @@ __pycache__/
 .uv/
 .jax_cache/
 
+# Claude Code local settings and scratch writes — not shared in the repo
+.claude/
+
 # Downloaded weights & data (large; fetched from HuggingFace on demand)
 model_checkpoints/
 data/
