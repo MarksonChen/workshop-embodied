@@ -67,12 +67,13 @@ def render(
         states = make_states(environment, trajectory)
         requested = float(trajectory["requested_source_speed_mps"])
         realized = float(trajectory["realized_source_equivalent_speed_mps"])
+        fetch_speed = float(trajectory["realized_fetch_forward_speed"])
         frames = [
             label(
                 np.asarray(
                     image.render_array(environment.sys, state, size, size, ssaa=1)
                 ),
-                f"request {requested:.2f} m/s | generated {realized:.2f} m/s",
+                f"rodent {requested:.2f}->{realized:.2f} m/s | Fetch {fetch_speed:.2f} u/s",
             )
             for state in states
         ]
