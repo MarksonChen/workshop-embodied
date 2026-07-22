@@ -78,3 +78,15 @@ demo_a/out/
 demo_a/runs_go1/
 demo_a_archive/runs_go1/
 demo_a_archive/out/
+
+# Streamlined workshop artifacts
+workshop/part1/out/
+workshop/part2/out/
+workshop/part3/out/
+!workshop/part2/data/
+!workshop/part2/data/*.py
+!workshop/part3/data/
+!workshop/part3/data/*.py
+!workshop/data/
+workshop/data/*
+!workshop/data/README.md
