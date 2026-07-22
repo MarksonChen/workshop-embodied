@@ -23,6 +23,11 @@ wandb/
 videos/
 *.mp4
 
+# Committed workshop showcase videos for the README — an explicit exception to
+# the global *.mp4 ignore above. Only this folder's mp4s are tracked.
+!attachments/
+!attachments/*.mp4
+
 # MuJoCo
 MUJOCO_LOG.TXT
 
