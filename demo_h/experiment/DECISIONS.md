@@ -181,3 +181,37 @@ This log is append-only once full model training begins.
   observation. This supersedes the earlier 5.16-unit standing figure: the
   corrected five-second standing rollout travels 4.36 Fetch units with minimum
   uprightness 0.975 and no saturated actions; both reset gates still pass.
+
+## 2026-07-22 — reopen and audit the frozen prior
+
+- Supersede the earlier qualitative prior acceptance. A batched held-out audit
+  starting from every exact test trajectory found that the frozen prior falls
+  in 10/342 five-second rollouts and drifts far beyond the validation/test
+  motion and action split gaps. The prior therefore cannot yet be described as
+  robust or in-distribution merely because one standing rollout survived.
+- Freeze the audit before model iteration: paired 48-frame trajectory skill,
+  250-frame motion/action sliced Wasserstein distances, contact-pattern JS,
+  gait summaries, speed tracking, finite values, and at least 99% survival.
+  These are validation-only diagnostics and never training losses.
+- Fix a temporal coverage error. The former command-window coupling trained
+  only actions 15–34, although deployment emits actions 15–62. Use one fixed
+  episode command, all 9 valid four-token planner anchors, and all 48 causal
+  action targets. This changes the frozen objective from 19.96 to 9.19 and
+  survival from 97.08% to 98.83%.
+- Confirm the coverage result over three seeds. The same clips repeatedly fail
+  after 1.4–2.2 seconds, so the remaining problem is systematic exposure, not
+  unlucky initialization. More action updates improve offline imitation while
+  worsening physical rollout; do not select checkpoints by one-step loss.
+- Reject abrupt 100% scheduled sampling, direct or leaky action heads,
+  plan-boundary recurrence resets, command-cell oversampling, and PD-labelled
+  recovery fine-tuning. The recovery labels improve the paired clip but damp
+  the long-run gait into a near-static attractor.
+- Retain normalized observation noise as the best local robustness change.
+  At standard deviation 0.10 it improves paired skill to 38.30%, gait distance
+  to 0.359, and the frozen objective to 4.43 without changing the persistent
+  four-fall set. It is a candidate, not an accepted prior.
+- Stop tuning 64-frame clips for a 250-frame requirement. The accepted 1.75x
+  release independently center-crops each source block; adjacent released
+  clips therefore contain temporal gaps and must not be stitched or looped.
+  Build true long, non-looped examples from contiguous strict-locomotion source
+  segments before making a new prior acceptance claim.

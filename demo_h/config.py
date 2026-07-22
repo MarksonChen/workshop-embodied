@@ -95,6 +95,7 @@ class PriorConfig:
     hidden: int = 192
     transformer_layers: int = 4
     transformer_heads: int = 4
+    planner_rollout_tokens: int = ACTION_PHASES
     downsample: int = 4
     history_tokens: int = HISTORY_TOKENS
     tokenizer_steps: int = 1_000
@@ -105,6 +106,7 @@ class PriorConfig:
     predicted_plan_probability: float = 0.75
     predicted_previous_control_probability: float = 0.75
     plan_noise_std: float = 0.05
+    feature_noise_std: float = 0.0
     action_parameterization: str = "previous_control_residual"
     previous_mean_coefficient: float = 1.0
 
@@ -144,4 +146,14 @@ class PriorConfig:
         if self.plan_noise_std < 0.0:
             raise ValueError(
                 f"plan_noise_std must be non-negative, got {self.plan_noise_std}"
+            )
+        if self.feature_noise_std < 0.0:
+            raise ValueError(
+                f"feature_noise_std must be non-negative, got "
+                f"{self.feature_noise_std}"
+            )
+        if not ACTION_PHASES <= self.planner_rollout_tokens <= 12:
+            raise ValueError(
+                "planner_rollout_tokens must cover 4 to 12 tokens, got "
+                f"{self.planner_rollout_tokens}"
             )

@@ -99,6 +99,28 @@ def _state_mse(model, windows, command_mean, command_std, batch_size=2048):
     return squared / count
 
 
+def _rollout_state_mse(
+    model,
+    history,
+    future,
+    command,
+    steps: int,
+    batch_size: int = 512,
+) -> float:
+    squared, count = 0.0, 0
+    with torch.inference_mode():
+        for offset in range(0, len(history), batch_size):
+            stop = min(offset + batch_size, len(history))
+            prediction = _predict_rollout(
+                model, history[offset:stop], command[offset:stop], steps
+            )
+            squared += F.mse_loss(
+                prediction, future[offset:stop], reduction="sum"
+            ).item()
+            count += future[offset:stop].numel()
+    return squared / count
+
+
 def _action_metrics(
     decoder,
     windows: StateActionWindows,
@@ -241,6 +263,11 @@ def main() -> None:
     parser.add_argument(
         "--predictor-steps", type=int, default=PriorConfig.predictor_steps
     )
+    parser.add_argument(
+        "--planner-rollout-tokens",
+        type=int,
+        default=PriorConfig.planner_rollout_tokens,
+    )
     parser.add_argument("--action-steps", type=int, default=PriorConfig.action_steps)
     parser.add_argument(
         "--history-encoding",
@@ -250,7 +277,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--action-parameterization",
-        choices=("previous_control_residual", "leaky_previous", "direct"),
+        choices=(
+            "previous_control_residual",
+            "leaky_previous",
+            "direct",
+        ),
         default="previous_control_residual",
     )
     parser.add_argument("--previous-mean-coefficient", type=float, default=1.0)
@@ -267,11 +298,15 @@ def main() -> None:
     parser.add_argument(
         "--plan-noise-std", type=float, default=PriorConfig.plan_noise_std
     )
+    parser.add_argument(
+        "--feature-noise-std", type=float, default=PriorConfig.feature_noise_std
+    )
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     config = PriorConfig(
         tokenizer_steps=20 if args.smoke else args.tokenizer_steps,
         predictor_steps=20 if args.smoke else args.predictor_steps,
+        planner_rollout_tokens=args.planner_rollout_tokens,
         action_steps=20 if args.smoke else args.action_steps,
         action_parameterization=args.action_parameterization,
         previous_mean_coefficient=args.previous_mean_coefficient,
@@ -280,6 +315,7 @@ def main() -> None:
             args.predicted_previous_control_probability
         ),
         plan_noise_std=args.plan_noise_std,
+        feature_noise_std=args.feature_noise_std,
     )
     config.validate_online_contract()
     seed_everything(args.seed)
@@ -392,6 +428,35 @@ def main() -> None:
         )
     command_mean = train_windows.command.mean(dim=0)
     command_std = train_windows.command.std(dim=0).clamp_min(1e-4)
+    long_rollout = config.planner_rollout_tokens > ACTION_PHASES
+    if long_rollout:
+        train_planner_history = train_windows.history.view(
+            len(train_features), len(train_windows.anchors), config.history_tokens, -1
+        )[:, 0]
+        validation_planner_history = validation_windows.history.view(
+            len(validation_features),
+            len(validation_windows.anchors),
+            config.history_tokens,
+            -1,
+        )[:, 0]
+        train_planner_future = train_tokens[
+            :, config.history_tokens : config.history_tokens + config.planner_rollout_tokens
+        ]
+        validation_planner_future = validation_tokens[
+            :, config.history_tokens : config.history_tokens + config.planner_rollout_tokens
+        ]
+        train_planner_command = (
+            train_windows.command.view(
+                len(train_features), len(train_windows.anchors), -1
+            )[:, 0]
+            - command_mean
+        ) / command_std
+        validation_planner_command = (
+            validation_windows.command.view(
+                len(validation_features), len(validation_windows.anchors), -1
+            )[:, 0]
+            - command_mean
+        ) / command_std
     print(
         f"state windows={len(train_windows.history):,}; "
         f"action targets={len(train_windows.target_control):,}; "
@@ -402,19 +467,34 @@ def main() -> None:
 
     optimizer = torch.optim.AdamW(predictor.parameters(), lr=config.learning_rate)
     best_predictor = None
-    best_state_mse = float("inf")
+    best_planner_selection_mse = float("inf")
     predictor.train()
     for step in range(config.predictor_steps):
-        index = torch.randint(
-            len(train_windows.history),
-            (config.batch_size,),
-            device=DEVICE,
-            generator=generator,
-        )
-        history = train_windows.history[index]
-        command = (train_windows.command[index] - command_mean) / command_std
-        prediction = _predict_rollout(predictor, history, command, ACTION_PHASES)
-        loss = F.mse_loss(prediction, train_windows.future[index])
+        if long_rollout:
+            index = torch.randint(
+                len(train_planner_history),
+                (config.batch_size,),
+                device=DEVICE,
+                generator=generator,
+            )
+            prediction = _predict_rollout(
+                predictor,
+                train_planner_history[index],
+                train_planner_command[index],
+                config.planner_rollout_tokens,
+            )
+            loss = F.mse_loss(prediction, train_planner_future[index])
+        else:
+            index = torch.randint(
+                len(train_windows.history),
+                (config.batch_size,),
+                device=DEVICE,
+                generator=generator,
+            )
+            history = train_windows.history[index]
+            command = (train_windows.command[index] - command_mean) / command_std
+            prediction = _predict_rollout(predictor, history, command, ACTION_PHASES)
+            loss = F.mse_loss(prediction, train_windows.future[index])
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
@@ -422,11 +502,20 @@ def main() -> None:
         completed = step + 1
         if completed % 250 == 0 or completed == config.predictor_steps:
             predictor.eval()
-            validation_mse = _state_mse(
-                predictor, validation_windows, command_mean, command_std
-            )
-            if validation_mse < best_state_mse:
-                best_state_mse = validation_mse
+            if long_rollout:
+                validation_mse = _rollout_state_mse(
+                    predictor,
+                    validation_planner_history,
+                    validation_planner_future,
+                    validation_planner_command,
+                    config.planner_rollout_tokens,
+                )
+            else:
+                validation_mse = _state_mse(
+                    predictor, validation_windows, command_mean, command_std
+                )
+            if validation_mse < best_planner_selection_mse:
+                best_planner_selection_mse = validation_mse
                 best_predictor = copy.deepcopy(predictor.state_dict())
             predictor.train()
             print(
@@ -440,6 +529,17 @@ def main() -> None:
     predictor.eval()
     state_validation_mse = _state_mse(
         predictor, validation_windows, command_mean, command_std
+    )
+    planner_rollout_validation_mse = (
+        _rollout_state_mse(
+            predictor,
+            validation_planner_history,
+            validation_planner_future,
+            validation_planner_command,
+            config.planner_rollout_tokens,
+        )
+        if long_rollout
+        else state_validation_mse
     )
     persistence_mse = F.mse_loss(
         validation_windows.history[:, -1:], validation_windows.future[:, :1]
@@ -534,15 +634,20 @@ def main() -> None:
                 noisy_true,
             )
             target = sequence["target"][clip_index, sequence_index]
+            feature = sequence["feature"][clip_index, sequence_index]
+            if config.feature_noise_std:
+                feature = feature + config.feature_noise_std * torch.randn(
+                    feature.shape, device=DEVICE, generator=generator
+                )
             action_mean = decoder(
-                sequence["feature"][clip_index, sequence_index],
+                feature,
                 plan,
                 previous,
                 sequence["phase"][clip_index, sequence_index],
                 sequence["command"][clip_index, sequence_index],
             )
             teacher_mean = decoder(
-                sequence["feature"][clip_index, sequence_index],
+                feature,
                 plan,
                 sequence["previous"][clip_index, sequence_index],
                 sequence["phase"][clip_index, sequence_index],
@@ -632,6 +737,7 @@ def main() -> None:
         "state_validation_mse": state_validation_mse,
         "state_persistence_mse": persistence_mse,
         "state_skill_over_persistence": 1.0 - state_validation_mse / persistence_mse,
+        "planner_rollout_validation_mse": planner_rollout_validation_mse,
         **{f"action_{name}": value for name, value in action_metrics.items()},
         "state_sigma": float(state_sigma),
         "action_log_std": decoder.log_std.detach().cpu().tolist(),
