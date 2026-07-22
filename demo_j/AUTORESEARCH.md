@@ -119,3 +119,30 @@ they must not be interpreted as functional locomotion success. Quantitatively,
 the realized speeds are `[-0.09, 1.01, 1.72, -0.27, 0.30, 0.28]` for commands
 `[1.5, 2.0, 2.5, 3.0, 3.5, 4.0]`, and several cases have zero or near-zero foot
 contact switches. The controller is an explicit negative functional result.
+
+## Native-clip correction
+
+Visual inspection exposed a structural error in the aligned experiment: the
+32-frame target repeated periodically, and the physical controller often failed
+at the artificial boundary. The release contains independent 64-frame clips,
+so there is no evidence that the last state of one period can transition to its
+first state.
+
+### Frozen replacement contract
+
+- Treat one 64-frame source clip as one 63-action recurrent episode.
+- Reset every SNN neuronal variable and the previous action at each clip
+  boundary.
+- Encode only complete four-frame future blocks that remain inside the clip.
+- Zero unavailable tail tokens and include one validity bit per token.
+- Train with full 63-step backpropagation through time and sample native clips
+  uniformly.
+- Evaluate physical imitation only over the native clip duration.
+- Record SNN and Demo H activity on matched 63-bin finite trials for RSA.
+- Keep speed, contact, RSA, and naturalness metrics out of training and model
+  selection.
+- Do not restore long-horizon PPO without genuinely continuous references or a
+  separately validated continuous trajectory generator.
+
+The periodic checkpoint, its long-horizon PPO, and its beta/RSA trend are
+rejected rather than treated as baselines for the replacement experiment.

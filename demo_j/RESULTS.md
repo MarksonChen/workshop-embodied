@@ -31,104 +31,39 @@ readout-only PPO warm start preserved the distilled policy but did not improve
 test imitation. Those trainers and checkpoints were removed from the supported
 surface; this negative result is retained only as provenance.
 
-## Aligned 1,000-bin SNN
+## Native-clip aligned SNN
 
-The aligned follow-up uses the same `1.75x` data and 20 ms action clock as Demo
-H. A train-only whitened PCA converts four 60-D feature frames into a 16-D
-token. SNN state and autoregressive previous action persist for 1,000 bins.
+The replacement aligned workflow uses the same `1.75x` data and 20 ms action
+clock as Demo H. A train-only whitened PCA converts four 60-D feature frames
+into a 16-D token. One recurrent episode follows one independent 64-frame clip
+for 63 actions, then resets.
 
-The release has independent 64-frame clips, not natural 20-second recordings.
-Training therefore repeats a wrap-screened 32-frame segment and labels the
-clock `synthetic-periodic-20ms`. No continuity beyond that segment is claimed.
+At each step, up to eight future tokens represent at most 640 ms of remaining
+in-clip motion. A token is zeroed and its mask is false whenever its complete
+four-frame block would cross the clip tail. Body state, previous action, future
+motion, and recurrent state never wrap to the first frame.
 
-### Future-preview ablation
+Training and held-out native-clip results are pending regeneration after this
+contract correction.
 
-| Preview | Horizon | Validation action MSE | Time |
-|---:|---:|---:|---:|
-| 1 token | 80 ms | .014159 | 22.0 s |
-| 4 tokens | 320 ms | **.013805** | 21.9 s |
-| 8 tokens | 640 ms | .013916 | 22.6 s |
+## Rejected periodic experiment
 
-The differences are small: the original five-frame/100 ms intention was not
-catastrophically short, and 640 ms offers no clear gain. At eight tokens,
-seeds 0/1/2 score `.013916`, `.014041`, and `.014213`. Doubling optimization
-from 64 to 128 episode batches lowers seed-0 MSE to `.012901` in 39.3 seconds,
-so the short run is useful but not fully converged.
+The earlier workflow repeated a screened 32-frame segment for 1,000 bins. That
+made the target periodic without evidence that its endpoint could transition
+back to its start. Visual inspection exposed impossible boundary targets and
+four of six showcased physical rollouts failed partway.
 
-Equal six-speed sampling repeats only real rows, but the release contains just
-2 of 266 eligible training cycles in the 3.75–4.0 stratum. Balanced validation
-MSE worsens to `.021797`; this variant is rejected for neural comparisons.
+Its future-preview sweep produced action MSEs `.014159`, `.013805`, and
+`.013916` for 1, 4, and 8 tokens. Its exact-input RSA peaked at beta zero
+(`.869` raw, `.680` behavior-partial), and its readout PPO realized speeds
+`[-.09, 1.01, 1.72, -.27, .30, .28]` for requests `[1.5, 2, 2.5, 3, 3.5, 4]`.
+Those values are retained only as an audit trail: the artificial periodic
+contract invalidates them as evidence about intention horizon, long-horizon
+imitation, or beta-dependent neural similarity.
 
-## Exact-input RSM/RSA
-
-Three SNN seeds and 18 Demo H checkpoints are evaluated on the same 30 fixed
-episodes: six speeds, five repeats, 1,000 bins. The behavior control is each
-SNN recording's exact raw 205-D input:
-
-```text
-body state                         60
-autoregressive previous action     10
-8 future tokens x 16              128
-phase + command                   4+3
-                                   ---
-                                   205
-```
-
-Conditions are speed by exact four-foot contact pattern. Sixty-eight
-conditions contain at least five samples in every repeat. The score is a
-Spearman comparison of diagonally noise-normalized crossvalidated RDMs; the
-control delays Demo H by 200 ms without wraparound.
-
-| beta | RSA | Delayed | Exact-input partial RSA | Partial delayed |
-|---:|---:|---:|---:|---:|
-| 0 | **.869** | .779 | **.680** | .547 |
-| .025 | .842 | .753 | .635 | .500 |
-| .05 | .755 | .669 | .454 | .366 |
-| .075 | .800 | .683 | .539 | .380 |
-| .10 | .749 | .667 | .439 | .346 |
-| .15 | .771 | .679 | .470 | .360 |
-
-Aligned scores exceed delayed scores at every beta, including after exact-input
-partialling. Beta zero is highest and `.025` second, so the aligned experiment
-rejects a monotonic “more prior makes Demo H more SNN-like” claim.
-
-Every recurrent SNN neuron receives dense input; there is no anatomical input
-layer. Excluding the top quartile by input-weight norm retains 192/256 neurons
-per seed, raises beta-zero RSA/partial RSA to `.882/.707`, and preserves the
-same beta ordering. The result is not driven by a few input-proximal units.
-
-Final artifacts:
-
-- `out/aligned/beta_rsa_full_input.{json,npz}`
-- `out/aligned/rsa_full_input/beta_rsa.{png,svg}`
-- `out/aligned/rsa_full_input/rsm_examples.{png,svg}`
-- matching `beta_rsa_exclude_input_q4` sensitivity files
-
-## Functional long-horizon probe
-
-An audit found that an early readout-PPO version collected 100-step episodes
-while evaluating for 1,000 steps. It was rejected. The corrected trainer
-requires identical collection and evaluation horizons and balances six speed
-strata. Its 2.56M-transition run takes 179 seconds.
-
-The environment's coarse termination condition remains false for all six
-1,000-step episodes, but that is **not** locomotion survival or success. Visual
-inspection of the retained comparison video shows roughly half the SNN
-rollouts losing locomotion partway. Only the 2.0 and 2.5 cases make substantial
-forward progress, both well below their commands; none solves speed control:
-
-```text
-requested  1.50  2.00  2.50  3.00  3.50  4.00
-realized  -0.09  1.01  1.72 -0.27  0.30  0.28
-```
-
-Mean track reward is `.241`. Several cases also have zero or near-zero contact
-switches for at least one foot. The retained video
-`out/aligned/snn_1000_step_speed_sweep_aligned.mp4` therefore demonstrates a
-failed long-horizon functional controller, despite uninterrupted recurrent
-activity and the permissive termination metric. Continuous source trajectories,
-on-policy imitation such as DAgger, or a TRACK-MJX-scale PPO budget would be
-needed before promoting this controller.
+The periodic preprocessing, long-horizon environment, and readout-PPO trainer
+have been removed from the supported package. A long-horizon claim requires
+genuinely continuous references or a separately validated trajectory generator.
 
 ## Biological bridge
 
@@ -145,14 +80,11 @@ The defensible workshop result is narrow:
 
 - a small differentiable SNN can closely imitate short physically realized
   Fetch motion sequences;
-- Demo H and SNN populations share fixed-input representational geometry beyond
-  exact inputs and a temporal-delay control;
-- increasing Demo H's prior strength does not reliably or monotonically
-  increase that similarity;
+- the periodic beta/RSA result is invalidated and awaits a native finite-trial
+  replacement;
 - the current SNN does not add predictive power for real Coltrane DLS activity;
-- the aligned 1,000-step controller fails functional locomotion and is retained
-  only as a negative result; uninterrupted neural activity is not behavioral
-  success.
+- the retired 1,000-step controller failed functional locomotion;
+  uninterrupted neural activity is not behavioral success.
 
 Synthetic spikes are a controlled reference, not biological ground truth, and
 representational similarity does not establish shared mechanism or causality.

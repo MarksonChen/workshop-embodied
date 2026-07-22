@@ -2,8 +2,8 @@
 
 from demo_j.control.aligned import (
     MotionTokenizer,
-    balanced_speed_indices,
-    build_periodic_sequences,
+    build_clip_sequences,
+    clip_observations,
     fit_tokenizer,
     load_tokenizer,
 )
@@ -20,9 +20,9 @@ from demo_j.experiments.render_aligned import render as render_aligned
 
 __all__ = [
     "MotionTokenizer",
-    "balanced_speed_indices",
-    "build_periodic_sequences",
+    "build_clip_sequences",
     "build_reference_cache",
+    "clip_observations",
     "compare_rsa",
     "evaluate_aligned",
     "evaluate_imitation",

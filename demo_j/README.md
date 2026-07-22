@@ -8,8 +8,8 @@ changes across prior strengths `beta` under identical locomotion inputs.
 The package intentionally supports only three workflows:
 
 1. short-clip SNN imitation, which is the accepted behavioral result;
-2. aligned 1,000-bin pretraining plus an exploratory readout-PPO probe;
-3. fixed-input RSM/RSA against the matched Demo H beta sweep.
+2. native-clip token-conditioned SNN imitation;
+3. finite-trial RSM/RSA against the matched Demo H beta sweep.
 
 Historical ANN probes, short-horizon PPO variants, controller-generated-prior
 experiments, motor-distance overlays, and the superseded Poisson/DLS command
@@ -24,6 +24,11 @@ and the append-only [AUTORESEARCH.md](AUTORESEARCH.md).
   is not an ML reconstruction or animal inverse dynamics.
 - Actor: 128 LIF plus 128 adaptive-LIF neurons, four 5 ms substeps per 20 ms
   action, hard forward spikes, and BrainPy surrogate gradients.
+- Episode: one independent 64-frame clip supplies 63 actions. Recurrent state
+  resets at the clip boundary; states, actions, and intentions never wrap.
+- Intention: each four-frame future-motion token is valid only when its whole
+  block lies inside the clip. Invalid tail tokens are zero and explicitly
+  masked.
 - Independence: no Demo H policy, hidden activation, beta value, or biological
   spike is used to train or select the SNN.
 - Analysis: compare population geometry rather than aligning units one-to-one;
@@ -54,26 +59,25 @@ MUJOCO_GL=egl uv run python -m demo_j.cli render-imitation \
   --output demo_j/out/snn_imitation_speed_sweep.mp4
 ```
 
-Run the aligned long-horizon experiment:
+Run native-clip token-conditioned imitation:
 
 ```bash
 uv run python -m demo_j.cli fit-tokenizer
 uv run python -m demo_j.cli train-aligned \
-  --preview-tokens 8 --seed 0 --episode-batches 64 \
-  --episode-steps 1000 --chunk-steps 50
-uv run python -m demo_j.cli train-ppo \
-  --init-checkpoint demo_j/out/aligned/snn_aligned_preview8_seed0_<stamp>.pkl \
-  --num-updates 20 --num-envs 128 --minibatch-envs 16 \
-  --episode-steps 1000 --unroll-steps 1000 --eval-every 2 \
-  --run-id aligned-long-balanced
+  --preview-tokens 8 --seed 0 --updates 2000 --batch-size 256
 uv run python -m demo_j.cli evaluate-aligned \
-  --checkpoint demo_j/out/aligned/snn_aligned-long-balanced_seed0_<stamp>.pkl \
-  --steps 1000 --speeds 1.5 2.0 2.5 3.0 3.5 4.0 \
-  --output demo_j/out/aligned/rollout_1000_long_balanced_seed0.npz
+  --checkpoint demo_j/out/aligned/snn_native_clip_seed0_<stamp>.pkl \
+  --speeds 1.5 2.0 2.5 3.0 3.5 4.0 \
+  --output demo_j/out/aligned/native_clip_rollout_seed0.npz
 MUJOCO_GL=egl uv run python -m demo_j.cli render-aligned \
-  --recording demo_j/out/aligned/rollout_1000_long_balanced_seed0.npz \
-  --output demo_j/out/aligned/snn_1000_step_speed_sweep_aligned.mp4
+  --recording demo_j/out/aligned/native_clip_rollout_seed0.npz \
+  --output demo_j/out/aligned/snn_native_clip_speed_sweep.mp4
 ```
+
+This workflow evaluates only the duration supported by each source clip. It
+does not manufacture a long reference by repeating a short segment. A genuine
+long-horizon experiment requires genuinely continuous references or a separate
+trajectory generator and is outside the current data contract.
 
 The `analysis` bridge is invoked through `export-h-trace` and
 `export-h-activations` in Demo H's isolated legacy environment. It exports one
@@ -82,17 +86,17 @@ SNN seed on that bank, compare, and plot:
 
 ```bash
 uv run python -m demo_j.cli record-aligned \
-  --checkpoint demo_j/out/aligned/snn_aligned_preview8_seed0_<stamp>.pkl \
-  --trace demo_j/out/aligned/h_fixed_trace_1032.npz \
-  --output demo_j/out/aligned/snn_fixed_1000_seed0.npz
+  --checkpoint demo_j/out/aligned/snn_native_clip_seed0_<stamp>.pkl \
+  --trace demo_j/out/aligned/h_native_trace_64.npz \
+  --output demo_j/out/aligned/snn_native_fixed_seed0.npz
 uv run python -m demo_j.cli compare-rsa \
-  --recording demo_j/out/aligned/snn_fixed_1000_seed[012].npz \
-  --trace demo_j/out/aligned/h_fixed_trace_1032.npz \
+  --recording demo_j/out/aligned/snn_native_fixed_seed[012].npz \
+  --trace demo_j/out/aligned/h_native_trace_64.npz \
   --activation demo_j/out/aligned/*_activations.npz \
-  --output demo_j/out/aligned/beta_rsa_full_input.json --permutations 1000
+  --output demo_j/out/aligned/beta_rsa_native.json --permutations 1000
 uv run python -m demo_j.cli plot-rsa \
-  --report demo_j/out/aligned/beta_rsa_full_input.json \
-  --output-dir demo_j/out/aligned/rsa_full_input
+  --report demo_j/out/aligned/beta_rsa_native.json \
+  --output-dir demo_j/out/aligned/rsa_native
 ```
 
 For a notebook, import the supported functions from `demo_j.api`; internal
@@ -112,17 +116,14 @@ control/
   config.py, snn.py          SNN timing contract and LSNN dynamics
   policy.py, imitation.py    short imitation policy and sequences
   tracking.py                short reference-tracking environment
-  aligned.py                 PCA tokens and disclosed periodic sequences
-  aligned_tracking.py        long functional locomotion environment
-  ppo.py                     minimal PPO math
+  aligned.py                 PCA tokens and finite native-clip sequences
 experiments/
   train_imitation.py         accepted short sequence distillation
   evaluate_imitation.py      held-out short evaluation
-  aligned.py                 tokenizer fitting and aligned pretraining
-  aligned_rollout.py         long rollout and fixed-input spike recording
-  train_ppo.py               full-horizon readout PPO
+  aligned.py                 tokenizer fitting and native-clip training
+  aligned_rollout.py         finite rollout and fixed-trial spike recording
   render.py                  short comparison video
-  render_aligned.py          long comparison video and speed audit
+  render_aligned.py          native-clip comparison video and speed audit
 analysis/
   bridge.py, contracts.py    legacy Demo H exports and provenance checks
   rsa.py, compare.py         RDM primitives and crossed-seed comparison
@@ -135,17 +136,15 @@ implementation details rather than additional workshop entry points.
 
 ## Current boundary
 
-The accepted 58-step SNN closely imitates held-out references. The aligned SNN
-can emit uninterrupted 1,000-bin activity for representation analysis, but its
-functional controller is a failed locomotion result: the comparison video shows
-roughly half the showcased rollouts losing locomotion partway, and none tracks
-its requested speed closely. The environment's coarse termination flag did not
-detect those failures, so it must not be reported as survival or success. The
-source release has independent 64-frame clips, so its repeated 32-frame aligned
-training sequence is explicitly marked synthetic-periodic rather than claimed
-as a natural continuous 20-second trajectory.
+The accepted 58-step SNN closely imitates held-out references. The previous
+1,000-bin aligned workflow and its readout PPO are rejected: they repeated a
+short segment, created discontinuities at every wrap, and roughly half of the
+showcased physical rollouts failed partway. Their old RSA result is also not a
+current result because the synthetic periodic input was out of contract. The
+replacement uses finite native clips and must be retrained and re-evaluated
+before a new beta/RSA conclusion is reported.
 
 Generated files under `demo_j/out/` are disposable. The retained local set is
-limited to the reference cache, canonical checkpoints/videos, final aligned
+limited to the reference cache, canonical checkpoints/videos, final native
 rollout, and final RSA reports/figures. Raw activation banks and rejected runs
 should be regenerated when needed, not accumulated indefinitely.

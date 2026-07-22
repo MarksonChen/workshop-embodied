@@ -24,9 +24,7 @@ ALIGNED_OUTPUT_ROOT = OUTPUT_ROOT / "aligned"
 _LEGACY_MODULES = {
     "demo_j.config": "demo_j.control.config",
     "demo_j.policy": "demo_j.control.policy",
-    "demo_j.ppo": "demo_j.control.ppo",
     "demo_j.snn": "demo_j.control.snn",
-    "demo_j.train_aligned_ppo": "demo_j.experiments.train_ppo",
 }
 
 

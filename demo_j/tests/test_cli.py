@@ -14,7 +14,6 @@ def test_cli_exposes_only_supported_workflows() -> None:
         "render-imitation",
         "fit-tokenizer",
         "train-aligned",
-        "train-ppo",
         "evaluate-aligned",
         "record-aligned",
         "render-aligned",

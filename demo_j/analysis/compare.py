@@ -29,7 +29,7 @@ ACTIVATION_FIELDS = (
     "raw_scale_correction",
     "policy_mean",
 )
-WARMUP_BINS = 32
+WARMUP_BINS = 8
 MINIMUM_BINS_PER_REPEAT = 5
 SHIFT_BINS = 10
 
@@ -286,7 +286,7 @@ def compare(
         "rsa": "Spearman correlation of unique RDM entries",
         "behavior_control": (
             "partial Spearman RSA controlling each SNN recording's exact raw "
-            "state, previous-action, future-reference/token, phase, and command input"
+            "state, previous-action, future-token, token-validity-mask, and command input"
         ),
         "input_proximity_sensitivity": (
             "excluded the top quartile of neurons by input-weight norm"
@@ -298,7 +298,7 @@ def compare(
         "matrix_artifact_sha256": sha256(matrix_path),
         "comparisons": comparisons,
         "interpretation_limit": (
-            "Conditions and behavior are synthetic fixed-trajectory measurements; "
+            "Conditions and behavior are fixed simulated trajectory measurements; "
             "RSA tests shared geometry, not unit alignment or causal equivalence."
         ),
     }

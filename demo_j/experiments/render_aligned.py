@@ -1,4 +1,4 @@
-"""Render the six-speed aligned rollout and its time-varying speed audit."""
+"""Render six finite native-clip targets beside their SNN rollouts."""
 
 from __future__ import annotations
 
@@ -74,13 +74,13 @@ def render(recording: Path, output: Path, *, panel_size: int, frame_stride: int)
             for index in range(6):
                 target_panel = _label(
                     render_one(target[index, frame]),
-                    f"{requested[index]:.2f} requested | periodic target",
+                    f"{requested[index]:.2f} requested | native target",
                     f"reference {reference_speed[index]:.2f} units/s",
                     font,
                 )
                 policy_panel = _label(
                     render_one(qpos[index, frame]),
-                    f"{requested[index]:.2f} requested | aligned SNN",
+                    f"{requested[index]:.2f} requested | native-clip SNN",
                     f"realized {realized_speed[index]:.2f} units/s",
                     font,
                 )
@@ -95,7 +95,7 @@ def render(recording: Path, output: Path, *, panel_size: int, frame_stride: int)
             writer.append_data(tiled)
     renderer.close()
 
-    smoothing_bins = max(1, round(0.5 * FPS))
+    smoothing_bins = max(1, round(0.1 * FPS))
     kernel = np.ones(smoothing_bins, np.float32) / smoothing_bins
     time_axis = np.arange(measured_speed.shape[1], dtype=np.float32) / FPS
     figure, axes = plt.subplots(2, 3, figsize=(11.5, 6.0), sharex=True, sharey=True)
@@ -109,8 +109,8 @@ def render(recording: Path, output: Path, *, panel_size: int, frame_stride: int)
         )
         axis.grid(alpha=0.18)
     figure.supxlabel("rollout time (s)")
-    figure.supylabel("forward speed (Fetch units/s; 0.5 s mean)")
-    figure.suptitle("Aligned SNN: instantaneous speed over 1,000 control steps")
+    figure.supylabel("forward speed (Fetch units/s; 0.1 s mean)")
+    figure.suptitle("Native-clip SNN: held-out finite-episode speed")
     figure.tight_layout()
     speed_plot = output.with_name(f"{output.stem}_speed.png")
     speed_plot_svg = speed_plot.with_suffix(".svg")
@@ -118,14 +118,15 @@ def render(recording: Path, output: Path, *, panel_size: int, frame_stride: int)
     figure.savefig(speed_plot_svg)
     plt.close(figure)
     report = {
-        "schema": "demo-j-aligned-periodic-comparison-video-v1",
+        "schema": "demo-j-native-clip-comparison-video-v1",
         "recording": str(recording),
         "output": str(output),
         "steps": int(qpos.shape[1] - 1),
         "rendered_frames": len(range(0, qpos.shape[1], frame_stride)),
         "fps": FPS / frame_stride,
-        "layout": "2 rows x 3 speeds; periodic target and SNN side by side",
-        "reference_kind": "explicit synthetic periodic extension",
+        "layout": "2 rows x 3 speeds; native target and SNN side by side",
+        "reference_kind": "finite native 64-frame held-out clips",
+        "periodic_extension_used": False,
         "speed_plot": str(speed_plot),
         "speed_smoothing_seconds": smoothing_bins / FPS,
     }
@@ -138,7 +139,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--recording", type=Path, required=True)
     parser.add_argument(
-        "--output", type=Path, default=ALIGNED_OUTPUT_ROOT / "rollout_1000.mp4"
+        "--output", type=Path, default=ALIGNED_OUTPUT_ROOT / "native_clip_rollout.mp4"
     )
     parser.add_argument("--panel-size", type=int, default=240)
     parser.add_argument("--frame-stride", type=int, default=4)

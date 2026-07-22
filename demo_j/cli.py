@@ -36,15 +36,12 @@ COMMANDS = {
     ),
     "train-aligned": Command(
         "demo_j.experiments.aligned",
-        "pretrain the aligned recurrent SNN",
+        "train the finite native-clip recurrent SNN",
         ("train",),
-    ),
-    "train-ppo": Command(
-        "demo_j.experiments.train_ppo", "post-train the aligned action readout with PPO"
     ),
     "evaluate-aligned": Command(
         "demo_j.experiments.aligned_rollout",
-        "run the aligned six-speed functional audit",
+        "evaluate six held-out native clips",
         ("evaluate",),
     ),
     "record-aligned": Command(
@@ -54,7 +51,7 @@ COMMANDS = {
     ),
     "render-aligned": Command(
         "demo_j.experiments.render_aligned",
-        "render the aligned rollout and speed audit",
+        "render native targets and SNN rollouts",
     ),
     "export-h-trace": Command(
         "demo_j.analysis.bridge",

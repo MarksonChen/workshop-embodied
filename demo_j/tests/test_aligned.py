@@ -3,14 +3,13 @@ from __future__ import annotations
 import numpy as np
 
 from demo_j.control.aligned import (
-    CYCLE_FRAMES,
+    PREVIOUS_ACTION_SLICE,
     TOKEN_DIM,
     TOKEN_FRAMES,
     MotionTokenizer,
     aligned_input_dim,
-    balanced_speed_indices,
-    build_periodic_sequences,
-    periodic_reference_set,
+    build_clip_sequences,
+    select_speed_examples,
 )
 from demo_j.data.dataset import ReferenceSet
 
@@ -67,38 +66,41 @@ def _tokenizer() -> MotionTokenizer:
     )
 
 
-def test_periodic_sequence_has_rolling_token_and_action_contract() -> None:
+def test_native_sequence_uses_every_transition_once_without_wrapping() -> None:
     reference = _reference()
-    sequences = build_periodic_sequences(reference, _tokenizer(), preview_tokens=4)
+    sequences = build_clip_sequences(reference, _tokenizer(), preview_tokens=4)
     assert sequences.observation.shape == (
         reference.clips,
-        CYCLE_FRAMES,
+        reference.frames - 1,
         aligned_input_dim(4),
     )
-    assert sequences.action.shape == (reference.clips, CYCLE_FRAMES, 10)
-    assert np.isfinite(sequences.observation).all()
-    assert np.all(sequences.speed > 0)
-
-
-def test_periodic_reference_discloses_synthetic_clock_and_translates() -> None:
-    reference = _reference()
-    sequences = build_periodic_sequences(reference, _tokenizer(), preview_tokens=1)
-    long = periodic_reference_set(
-        reference, sequences, np.asarray((0,), np.int32), frames=97
+    np.testing.assert_array_equal(sequences.action, reference.teacher_action)
+    np.testing.assert_array_equal(
+        sequences.observation[:, 0, PREVIOUS_ACTION_SLICE], 0.0
     )
-    assert long.clock == "synthetic-periodic-20ms"
-    assert np.isnan(long.source_frame).all()
-    assert long.qpos.shape == (1, 97, 17)
-    assert long.teacher_action.shape == (1, 96, 10)
-    assert long.root_position[0, 64, 0] > long.root_position[0, 32, 0]
+    np.testing.assert_array_equal(
+        sequences.observation[:, 1:, PREVIOUS_ACTION_SLICE],
+        reference.teacher_action[:, :-1],
+    )
 
 
-def test_balanced_speed_indices_repeat_only_real_rows() -> None:
-    reference = _reference()
-    sequences = build_periodic_sequences(reference, _tokenizer(), preview_tokens=1)
-    anchors = np.asarray((sequences.speed.min(), sequences.speed.max()))
-    selected = balanced_speed_indices(sequences, clips_per_speed=3, anchors=anchors)
-    assert selected.shape == (6,)
-    assert set(selected.tolist()) <= {0, 1}
-    assert np.count_nonzero(selected == 0) == 3
-    assert np.count_nonzero(selected == 1) == 3
+def test_future_tail_is_zeroed_and_explicitly_masked() -> None:
+    sequences = build_clip_sequences(_reference(), _tokenizer(), preview_tokens=4)
+    assert np.all(sequences.preview_mask[:, 0] == 1)
+    assert np.all(sequences.preview_mask[:, -1] == 0)
+    token_start = PREVIOUS_ACTION_SLICE.stop
+    token_stop = token_start + 4 * TOKEN_DIM
+    np.testing.assert_array_equal(
+        sequences.observation[:, -1, token_start:token_stop], 0
+    )
+    np.testing.assert_array_equal(
+        sequences.observation[:, :, token_stop : token_stop + 4],
+        sequences.preview_mask,
+    )
+
+
+def test_speed_selection_returns_distinct_real_clips() -> None:
+    sequences = build_clip_sequences(_reference(), _tokenizer(), preview_tokens=1)
+    selected = select_speed_examples(sequences, sequences.speed)
+    assert selected.shape == (2,)
+    assert set(selected.tolist()) == {0, 1}
