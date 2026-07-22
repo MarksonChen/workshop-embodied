@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
@@ -14,7 +15,8 @@ from demo_f.dataset.contract import DEFAULT_ROOT as ORIGINAL_DEMO_F_ROOT
 from demo_f.dataset.retime import crop_starts
 from demo_h.dataset.contract import DEFAULT_ROOT, DATASET_VARIANT, PARENT_ROOT
 
-from demo_j.fetch_mjx import host_model, joint_qpos_addresses, joint_qvel_addresses
+from demo_j.artifacts import sha256
+from demo_j.data.physics import host_model, joint_qpos_addresses, joint_qvel_addresses
 
 
 TIME_SCALE = 1.75
@@ -43,6 +45,7 @@ class ReferenceSet:
     sessions: tuple[str, ...]
     split: str
     manifest_sha256: str
+    clock: str = "retimed-1p75"
 
     @property
     def clips(self) -> int:
@@ -69,16 +72,6 @@ def take_references(reference: ReferenceSet, indices: np.ndarray) -> ReferenceSe
     return replace(reference, **updates)
 
 
-def _sha256(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def exact_source_frames(source_start: np.ndarray, frames: int = 64) -> np.ndarray:
     """Map every retimed output frame back to its fractional raw-data frame."""
 
@@ -102,18 +95,17 @@ def _verified_raw_source_starts(
     than silently treating the rounded value as an exact neural timestamp.
     """
 
-    original_manifest = json.loads(
-        (ORIGINAL_DEMO_F_ROOT / "manifest.json").read_text()
-    )
+    original_manifest = json.loads((ORIGINAL_DEMO_F_ROOT / "manifest.json").read_text())
     original_rows = {
-        (row["split"], row["session"]): row
-        for row in original_manifest["sessions"]
+        (row["split"], row["session"]): row for row in original_manifest["sessions"]
     }
     resolved: list[np.ndarray] = []
     for row, ids, starts in zip(rows, parent_ids, stored_starts, strict=True):
         with np.load(PARENT_ROOT / row["parent_shard"]) as parent:
             if np.any(ids < 0) or np.any(ids >= len(parent["source_start"])):
-                raise ValueError(f"parent clip index out of bounds for {row['session']}")
+                raise ValueError(
+                    f"parent clip index out of bounds for {row['session']}"
+                )
             selected = np.asarray(parent["source_start"][ids], np.int32)
         if not np.array_equal(selected, starts):
             raise ValueError(f"Demo H/retimed-parent mismatch for {row['session']}")
@@ -213,9 +205,7 @@ def load_reference_set(split: str, root: Path = DEFAULT_ROOT) -> ReferenceSet:
     qpos[..., joint_qpos_addresses()] = angles
     qvel = _reference_qvel(roots, quaternions, angles)
     source_start = values["source_start"].astype(np.int32)
-    raw_source_start = _verified_raw_source_starts(
-        rows, parent_ids, stored_starts
-    )
+    raw_source_start = _verified_raw_source_starts(rows, parent_ids, stored_starts)
     expected_source_start = raw_source_start + ROUNDED_SOURCE_OFFSET
     if not np.array_equal(source_start, expected_source_start):
         raise ValueError("retimed source-start offset is inconsistent")
@@ -239,7 +229,105 @@ def load_reference_set(split: str, root: Path = DEFAULT_ROOT) -> ReferenceSet:
         ),
         sessions=tuple(sessions),
         split=split,
-        manifest_sha256=_sha256(manifest_path),
+        manifest_sha256=sha256(manifest_path),
+    )
+
+
+def load_source_clock_reference(
+    split: str,
+    base: ReferenceSet | None = None,
+    root: Path = ORIGINAL_DEMO_F_ROOT,
+) -> ReferenceSet:
+    """Recover each retimed clip's untouched 50 Hz parent trajectory.
+
+    The returned arrays remain in the same clip order and session split as the
+    Demo J reference.  They are for teacher-forced neural analysis only: no
+    source-clock action label is invented and no physics claim is made.
+    """
+
+    base = load_reference_set(split) if base is None else base
+    root = Path(root)
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    rows = {(row["split"], row["session"]): row for row in manifest["sessions"]}
+    clips, frames = base.clips, base.frames
+    roots = np.empty((clips, frames, 3), np.float32)
+    quaternions = np.empty((clips, frames, 4), np.float32)
+    angles = np.empty((clips, frames, 10), np.float32)
+    features = np.empty((clips, frames, 60), np.float32)
+    contacts = np.empty((clips, frames, 4), np.uint8)
+    commands = np.empty((clips, 3), np.float32)
+    parent_ids = np.empty((clips,), np.int32)
+
+    from demo_f.features import trajectory_features
+
+    for session_index, session in enumerate(base.sessions):
+        clip_ids = np.flatnonzero(base.session_index == session_index)
+        if not len(clip_ids):
+            continue
+        row = rows[(split, session)]
+        with np.load(root / row["shard"]) as archive:
+            original_starts = np.asarray(archive["source_start"], np.int32)
+            index = {int(start): i for i, start in enumerate(original_starts)}
+            try:
+                selected = np.asarray(
+                    [index[int(start)] for start in base.raw_source_start[clip_ids]],
+                    np.int32,
+                )
+            except KeyError as error:
+                raise ValueError(
+                    f"source-clock parent missing for {session}: {error}"
+                ) from error
+            session_roots = np.asarray(archive["root_position"][selected], np.float32)
+            session_quaternions = np.asarray(
+                archive["root_quaternion"][selected], np.float32
+            )
+            session_angles = np.asarray(archive["joint_angles"][selected], np.float32)
+            session_feet = np.asarray(archive["feet_local"][selected], np.float32)
+            session_contacts = np.asarray(archive["contacts"][selected], np.uint8)
+            roots[clip_ids] = session_roots
+            quaternions[clip_ids] = session_quaternions
+            angles[clip_ids] = session_angles
+            contacts[clip_ids] = session_contacts
+            commands[clip_ids] = np.asarray(archive["command"][selected], np.float32)
+            parent_ids[clip_ids] = selected
+            features[clip_ids] = trajectory_features(
+                session_roots,
+                session_quaternions,
+                session_angles,
+                session_feet,
+                session_contacts,
+            )
+
+    model = host_model()
+    qpos = np.broadcast_to(model.qpos0, (clips, frames, model.nq)).copy()
+    qpos[..., :3] = roots
+    qpos[..., 3:7] = quaternions
+    qpos[..., joint_qpos_addresses()] = angles
+    qvel = _reference_qvel(roots, quaternions, angles)
+    source_manifest_hash = sha256(manifest_path)
+    contract_hash = hashlib.sha256(
+        (base.manifest_sha256 + source_manifest_hash + "source-clock-v1").encode()
+    ).hexdigest()
+    return ReferenceSet(
+        qpos=qpos.astype(np.float32),
+        qvel=qvel,
+        features=features,
+        contacts=contacts,
+        root_position=roots,
+        root_quaternion=quaternions,
+        joint_angles=angles,
+        command=commands,
+        teacher_action=np.zeros((clips, frames - 1, 10), np.float32),
+        session_index=base.session_index.copy(),
+        parent_clip_id=parent_ids,
+        source_start=base.raw_source_start.copy(),
+        raw_source_start=base.raw_source_start.copy(),
+        source_frame=base.raw_source_start[:, None] + np.arange(frames)[None],
+        sessions=base.sessions,
+        split=split,
+        manifest_sha256=contract_hash,
+        clock="source-1p0",
     )
 
 

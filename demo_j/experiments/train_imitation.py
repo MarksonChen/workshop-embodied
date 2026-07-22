@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import pickle
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,25 +13,17 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from demo_j.config import SNNConfig
-from demo_j.imitation import normalization, teacher_forced_sequences
-from demo_j.policy import init_policy, policy_sequence
-from demo_j.projection import DEFAULT_ROOT as PROJECTED_ROOT
-from demo_j.projection import load_projected_reference
-from demo_j.snn import initial_state
+from demo_j.control.config import SNNConfig
+from demo_j.artifacts import OUTPUT_ROOT, save_pickle, sha256, write_json
+from demo_j.control.imitation import normalization, teacher_forced_sequences
+from demo_j.control.policy import init_policy, policy_sequence
+from demo_j.data.projection import DEFAULT_ROOT as PROJECTED_ROOT
+from demo_j.data.projection import load_projected_reference
+from demo_j.control.snn import initial_state
 
 
-OUT = Path(__file__).resolve().parent / "out"
 TARGET_SPIKE_PROBABILITY = 0.02  # broad anti-silence target per 5 ms substep
 ACTIVITY_COEFFICIENT = 1e-3
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def main() -> None:
@@ -48,9 +38,7 @@ def main() -> None:
     steps = 20 if args.smoke else args.steps
 
     training_reference = load_projected_reference("train", args.reference_root)
-    validation_reference = load_projected_reference(
-        "validation", args.reference_root
-    )
+    validation_reference = load_projected_reference("validation", args.reference_root)
     training = teacher_forced_sequences(training_reference)
     validation = teacher_forced_sequences(validation_reference)
     mean, std = normalization(training)
@@ -122,9 +110,7 @@ def main() -> None:
     report_every = max(1, steps // 10)
     for step in range(1, steps + 1):
         key, batch_key = jax.random.split(key)
-        indices = jax.random.randint(
-            batch_key, (args.batch_size,), 0, training.clips
-        )
+        indices = jax.random.randint(batch_key, (args.batch_size,), 0, training.clips)
         params, optimizer_state, metrics = update(
             params,
             optimizer_state,
@@ -146,9 +132,9 @@ def main() -> None:
             print(json.dumps(row), flush=True)
 
     elapsed = time.perf_counter() - started
-    OUT.mkdir(parents=True, exist_ok=True)
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    checkpoint = OUT / f"snn_distilled_seed{args.seed}_{stamp}.pkl"
+    checkpoint = OUTPUT_ROOT / f"snn_distilled_seed{args.seed}_{stamp}.pkl"
     payload = {
         "schema": "demo-j-snn-distillation-v1",
         "params": jax.device_get(params),
@@ -159,14 +145,13 @@ def main() -> None:
         "training_steps": steps,
         "seed": args.seed,
     }
-    with checkpoint.open("wb") as stream:
-        pickle.dump(payload, stream)
+    save_pickle(checkpoint, payload)
     report_path = checkpoint.with_suffix(".json")
     report = {
         "schema": "demo-j-snn-distillation-training-v1",
         "method": "sequence behavior cloning from independent feedback projection",
         "checkpoint": str(checkpoint),
-        "checkpoint_sha256": _sha256(checkpoint),
+        "checkpoint_sha256": sha256(checkpoint),
         "seed": args.seed,
         "steps": steps,
         "batch_size": args.batch_size,
@@ -177,7 +162,7 @@ def main() -> None:
         "target_spike_probability_per_5ms": TARGET_SPIKE_PROBABILITY,
         "progress": progress,
     }
-    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    write_json(report_path, report)
     print(f"wrote {checkpoint} and {report_path}", flush=True)
 
 

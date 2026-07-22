@@ -19,7 +19,14 @@ from .config import (
 PPO_CHECKPOINT_SCHEMA = "demo-h-ppo-checkpoint-v2"
 
 
-def save_policy_checkpoint(path: Path, params, *, arm: str, prior_path: Path) -> dict:
+def save_policy_checkpoint(
+    path: Path,
+    params,
+    *,
+    arm: str,
+    prior_path: Path,
+    run_metadata: dict | None = None,
+) -> dict:
     """Save parameters with the contract needed to load them safely."""
 
     if arm not in {"h1", "h2"} or prior_path is None:
@@ -33,6 +40,8 @@ def save_policy_checkpoint(path: Path, params, *, arm: str, prior_path: Path) ->
         "prior_sha256": prior_hash,
         "observation_contract_version": OBSERVATION_CONTRACT_VERSION,
     }
+    if run_metadata is not None:
+        metadata["training"] = dict(run_metadata)
     envelope = {**metadata, "params": params}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as stream:
@@ -96,7 +105,9 @@ def load_policy_checkpoint(
     if expected_arm not in {"h1", "h2"}:
         raise ValueError(f"unsupported Demo H arm {expected_arm!r}")
     path = Path(path)
-    sidecar_metadata = _legacy_metadata(path) if path.with_suffix(".json").is_file() else None
+    sidecar_metadata = (
+        _legacy_metadata(path) if path.with_suffix(".json").is_file() else None
+    )
     if sidecar_metadata is not None:
         # Reject a wrong prior before unpickling version-specific JAX arrays.
         _validate_metadata(sidecar_metadata, expected_arm, expected_prior_sha256)

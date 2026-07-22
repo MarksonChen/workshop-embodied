@@ -6,9 +6,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from demo_j.dataset import ReferenceSet
-from demo_j.env import LAST_TRACK_FRAME, OBS_DIM, REFERENCE_FRAMES
-from demo_j.fetch_mjx import joint_qpos_addresses, joint_qvel_addresses
+from demo_j.data.dataset import ReferenceSet
+from demo_j.control.tracking import LAST_TRACK_FRAME, OBS_DIM, REFERENCE_FRAMES
+from demo_j.data.physics import joint_qvel_addresses
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,62 @@ def _inverse_rotate(vector: np.ndarray, quaternion: np.ndarray) -> np.ndarray:
     return vector + scalar * twice_cross + np.cross(xyz, twice_cross)
 
 
+def future_reference_observations(
+    root_position: np.ndarray,
+    root_quaternion: np.ndarray,
+    joint_angles: np.ndarray,
+    joint_velocities: np.ndarray,
+    *,
+    steps: int,
+) -> np.ndarray:
+    """Build Demo J's root-relative five-frame intention target.
+
+    Inputs have shape ``[clips, frames, channels]`` and may come from either
+    the projected dataset or an independently recorded locomotion trajectory.
+    """
+
+    root_position = np.asarray(root_position, np.float32)
+    root_quaternion = np.asarray(root_quaternion, np.float32)
+    joint_angles = np.asarray(joint_angles, np.float32)
+    joint_velocities = np.asarray(joint_velocities, np.float32)
+    shapes = {
+        value.shape[:2]
+        for value in (
+            root_position,
+            root_quaternion,
+            joint_angles,
+            joint_velocities,
+        )
+    }
+    if len(shapes) != 1:
+        raise ValueError(shapes)
+    clips, frames = root_position.shape[:2]
+    if not 1 <= steps <= frames - REFERENCE_FRAMES:
+        raise ValueError((steps, frames))
+    rows = []
+    for frame in range(steps):
+        indices = frame + 1 + np.arange(REFERENCE_FRAMES)
+        root_target = _inverse_rotate(
+            root_position[:, indices] - root_position[:, frame, None],
+            root_quaternion[:, frame, None],
+        )
+        quaternion_target = _quaternion_multiply(
+            root_quaternion[:, frame, None],
+            _quaternion_inverse(root_quaternion[:, indices]),
+        )
+        angle_target = joint_angles[:, indices] - joint_angles[:, frame, None]
+        velocity_target = (
+            joint_velocities[:, indices] - joint_velocities[:, frame, None]
+        )
+        rows.append(
+            np.concatenate(
+                (root_target, quaternion_target, angle_target, velocity_target),
+                axis=-1,
+            ).reshape(clips, -1)
+        )
+    return np.stack(rows, axis=1).astype(np.float32)
+
+
 def teacher_forced_sequences(
     reference: ReferenceSet,
     steps: int = LAST_TRACK_FRAME,
@@ -75,41 +131,13 @@ def teacher_forced_sequences(
         ),
         axis=1,
     )
-    reference_rows = []
-    for frame in range(steps):
-        indices = np.minimum(
-            frame + 1 + np.arange(REFERENCE_FRAMES), reference.frames - 1
-        )
-        target_qpos = reference.qpos[:, indices]
-        target_qvel = reference.qvel[:, indices]
-        current_qpos = reference.qpos[:, frame]
-        current_qvel = reference.qvel[:, frame]
-        root_target = _inverse_rotate(
-            target_qpos[..., :3] - current_qpos[:, None, :3],
-            current_qpos[:, None, 3:7],
-        )
-        # Match brax.math.relative_quat(target, current) exactly.
-        quaternion_target = _quaternion_multiply(
-            current_qpos[:, None, 3:7],
-            _quaternion_inverse(target_qpos[..., 3:7]),
-        )
-        qpos_address = joint_qpos_addresses()
-        qvel_address = joint_qvel_addresses()
-        angle_target = (
-            target_qpos[..., qpos_address]
-            - current_qpos[:, None, qpos_address]
-        )
-        velocity_target = (
-            target_qvel[..., qvel_address]
-            - current_qvel[:, None, qvel_address]
-        )
-        reference_rows.append(
-            np.concatenate(
-                (root_target, quaternion_target, angle_target, velocity_target),
-                axis=-1,
-            ).reshape(clips, -1)
-        )
-    reference_observation = np.stack(reference_rows, axis=1).astype(np.float32)
+    reference_observation = future_reference_observations(
+        reference.root_position,
+        reference.root_quaternion,
+        reference.joint_angles,
+        reference.qvel[..., joint_qvel_addresses()],
+        steps=steps,
+    )
     observation = np.concatenate(
         (
             reference.features[:, :steps],

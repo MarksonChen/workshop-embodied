@@ -12,8 +12,8 @@ import brax
 import jax
 import jax.numpy as jnp
 
-from demo_j.config import SNNConfig
-from demo_j.snn import init_params, initial_state, sequence
+from demo_j.control.config import SNNConfig
+from demo_j.control.snn import init_params, initial_state, sequence
 
 
 def run_smoke(*, steps: int = 1_000, batch_size: int = 16) -> dict[str, object]:
@@ -89,4 +89,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

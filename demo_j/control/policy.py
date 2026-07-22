@@ -7,9 +7,9 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from demo_j.config import ACTION_DIM, FEATURE_DIM, INTENTION_DIM, SNNConfig
-from demo_j.env import REFERENCE_DIM
-from demo_j.snn import LSNNParams, LSNNState, init_params, sequence
+from demo_j.control.config import ACTION_DIM, FEATURE_DIM, INTENTION_DIM, SNNConfig
+from demo_j.control.tracking import REFERENCE_DIM
+from demo_j.control.snn import LSNNParams, LSNNState, init_params, sequence
 
 
 CURRENT_DIM = FEATURE_DIM + ACTION_DIM
@@ -37,9 +37,7 @@ def init_policy(key: jax.Array, config: SNNConfig) -> PolicyParams:
     return PolicyParams(
         reference_weight_1=_lecun(key_1, REFERENCE_DIM, REFERENCE_HIDDEN_DIM),
         reference_bias_1=jnp.zeros((REFERENCE_HIDDEN_DIM,), jnp.float32),
-        reference_weight_2=_lecun(
-            key_2, REFERENCE_HIDDEN_DIM, INTENTION_DIM
-        ),
+        reference_weight_2=_lecun(key_2, REFERENCE_HIDDEN_DIM, INTENTION_DIM),
         reference_bias_2=jnp.zeros((INTENTION_DIM,), jnp.float32),
         snn=init_params(key_snn, SNN_INPUT_DIM, ACTION_DIM, config),
         log_standard_deviation=jnp.full((ACTION_DIM,), -1.5, jnp.float32),
@@ -68,6 +66,19 @@ def policy_sequence(
 ) -> tuple[LSNNState, tuple[jax.Array, jax.Array]]:
     """Run time-major observations and return bounded means and hard spikes."""
 
-    encoded = encode_observation(params, observation)
-    state, (unbounded, spikes) = sequence(params.snn, state, encoded, config)
+    state, (unbounded, spikes) = policy_logits_sequence(
+        params, state, observation, config
+    )
     return state, (jnp.tanh(unbounded), spikes)
+
+
+def policy_logits_sequence(
+    params: PolicyParams,
+    state: LSNNState,
+    observation: jax.Array,
+    config: SNNConfig,
+) -> tuple[LSNNState, tuple[jax.Array, jax.Array]]:
+    """Return pre-tanh Gaussian means for recurrent PPO and hard spikes."""
+
+    encoded = encode_observation(params, observation)
+    return sequence(params.snn, state, encoded, config)

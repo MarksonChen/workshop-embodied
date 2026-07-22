@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
-
 import jax
 import jax.numpy as jnp
 import mujoco
@@ -12,10 +10,10 @@ import numpy as np
 from brax.io import mjcf
 
 from demo_f.config import FETCH_FOOT_NAMES, JOINT_NAMES
+from demo_j.artifacts import PACKAGE_ROOT
 
 
-ROOT = Path(__file__).resolve().parent
-XML_PATH = ROOT / "assets" / "fetch.xml"
+XML_PATH = PACKAGE_ROOT / "assets" / "fetch.xml"
 FOOT_SITE_NAMES = (
     "front_right_foot",
     "front_left_foot",
@@ -38,7 +36,9 @@ def system():
     return mjcf.load(XML_PATH)
 
 
-def _named_addresses(kind: mujoco.mjtObj, names: tuple[str, ...], field: str) -> np.ndarray:
+def _named_addresses(
+    kind: mujoco.mjtObj, names: tuple[str, ...], field: str
+) -> np.ndarray:
     model = host_model()
     values = []
     for name in names:
@@ -96,7 +96,9 @@ def set_joint_angles(qpos: jax.Array, angles: jax.Array) -> jax.Array:
 
 
 def set_joint_velocities(qvel: jax.Array, velocities: jax.Array) -> jax.Array:
-    return jnp.asarray(qvel).at[..., jnp.asarray(joint_qvel_addresses())].set(velocities)
+    return (
+        jnp.asarray(qvel).at[..., jnp.asarray(joint_qvel_addresses())].set(velocities)
+    )
 
 
 def validate_contract() -> dict[str, object]:
@@ -126,4 +128,3 @@ def validate_contract() -> dict[str, object]:
         "actuator_order": list(actuator_names),
         "actuator_gear": model.actuator_gear[:, 0].astype(float).tolist(),
     }
-

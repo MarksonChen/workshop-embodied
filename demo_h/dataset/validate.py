@@ -34,6 +34,7 @@ from demo_h.config import (
 )
 
 from .contract import (
+    CONTROLLER_DATASET_VARIANT,
     DATASET_VARIANT,
     DEFAULT_ROOT,
     DTYPES,
@@ -156,7 +157,7 @@ def replay_report(
     }
 
 
-def validate_archive(path: Path) -> dict:
+def validate_archive(path: Path, dataset_variant: str = DATASET_VARIANT) -> dict:
     with np.load(path) as archive:
         missing = sorted(set(FIELDS) - set(archive.files))
         if missing:
@@ -188,7 +189,9 @@ def validate_archive(path: Path) -> dict:
         realized_quaternion = archive["realized_root_quaternion"]
         realized_angles = archive["realized_joint_angles"]
         realized_contacts = archive["realized_contacts"]
-        if not np.array_equal(realized_contacts[:, 0], realized_contacts[:, 1]):
+        if dataset_variant == DATASET_VARIANT and not np.array_equal(
+            realized_contacts[:, 0], realized_contacts[:, 1]
+        ):
             raise ValueError(f"{path} violates feature-contract-v1 frame-zero contacts")
         feet = fetch_feet_numpy(realized_angles)
         recomputed_features = trajectory_features(
@@ -253,15 +256,19 @@ def validate_archive(path: Path) -> dict:
         for name, expected in derived.items():
             if not np.allclose(expected, archive[name], rtol=1e-5, atol=2e-5):
                 raise ValueError(f"{path}:{name} does not match realized trajectory")
-        gates = {
-            "control_saturation_fraction": (None, MAX_CONTROL_SATURATION),
-            "joint_tracking_rmse": (None, MAX_JOINT_TRACKING_RMSE),
-            "minimum_torso_height": (MIN_TORSO_HEIGHT, None),
-            "minimum_upright": (MIN_UPRIGHT, None),
-            "maximum_planar_speed": (None, MAX_PLANAR_SPEED),
-            "maximum_yaw_rate": (None, MAX_YAW_RATE),
-            "realized_command_speed": (None, MAX_COMMAND_SPEED),
-        }
+        gates = (
+            {
+                "control_saturation_fraction": (None, MAX_CONTROL_SATURATION),
+                "joint_tracking_rmse": (None, MAX_JOINT_TRACKING_RMSE),
+                "minimum_torso_height": (MIN_TORSO_HEIGHT, None),
+                "minimum_upright": (MIN_UPRIGHT, None),
+                "maximum_planar_speed": (None, MAX_PLANAR_SPEED),
+                "maximum_yaw_rate": (None, MAX_YAW_RATE),
+                "realized_command_speed": (None, MAX_COMMAND_SPEED),
+            }
+            if dataset_variant == DATASET_VARIANT
+            else {"minimum_torso_height": (0.5, None)}
+        )
         for name, (minimum, maximum) in gates.items():
             values = archive[name]
             if minimum is not None and values.min(initial=np.inf) < minimum - 1e-6:
@@ -278,15 +285,22 @@ def validate_archive(path: Path) -> dict:
         }
 
 
-def validate_release(root: Path = DEFAULT_ROOT) -> dict:
+def validate_release(
+    root: Path = DEFAULT_ROOT,
+    *,
+    expected_variant: str = DATASET_VARIANT,
+) -> dict:
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text())
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(f"unexpected schema {manifest.get('schema_version')!r}")
     if not manifest.get("complete_release", False):
         raise ValueError("Demo H training requires a complete release")
-    if manifest.get("variant") != DATASET_VARIANT:
-        raise ValueError(f"unexpected dataset variant {manifest.get('variant')!r}")
+    if manifest.get("variant") != expected_variant:
+        raise ValueError(
+            f"unexpected dataset variant {manifest.get('variant')!r}; "
+            f"expected {expected_variant!r}"
+        )
     feature_contract = manifest.get(
         "feature_contract_version", LEGACY_FEATURE_CONTRACT_VERSION
     )
@@ -310,11 +324,13 @@ def validate_release(root: Path = DEFAULT_ROOT) -> dict:
         shard = root / session["shard"]
         if sha256(shard) != session.get("shard_sha256"):
             raise ValueError(f"checksum mismatch: {shard}")
-        report = validate_archive(shard)
+        report = validate_archive(shard, expected_variant)
         if report["clips"] != session["released_clips"]:
             raise ValueError(f"manifest count mismatch for {session['session']}")
         counts[session["split"]] += report["clips"]
-        sessions[session["split"]].add(session["session"])
+        sessions[session["split"]].add(
+            session.get("source_session", session["session"])
+        )
         rows.append(report)
     if counts != manifest["counts"]:
         raise ValueError(f"split count mismatch: {counts} != {manifest['counts']}")
@@ -350,6 +366,7 @@ def validate_release(root: Path = DEFAULT_ROOT) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--dataset-variant", default=DATASET_VARIANT)
     parser.add_argument(
         "--replay-clips",
         type=int,
@@ -359,9 +376,16 @@ def main() -> None:
     args = parser.parse_args()
     manifest = json.loads((args.dataset_root / "manifest.json").read_text())
     expected_backend = manifest.get("physics", {}).get("jax_backend", "gpu")
+    if args.replay_clips and args.dataset_variant == CONTROLLER_DATASET_VARIANT:
+        raise ValueError(
+            "controller-generated data require modern-MJX replay; legacy Brax "
+            "replay is intentionally unavailable"
+        )
     if args.replay_clips:
         _require_replay_backend(expected_backend)
-    report = validate_release(args.dataset_root)
+    report = validate_release(
+        args.dataset_root, expected_variant=args.dataset_variant
+    )
     if args.replay_clips:
         shard = next(
             args.dataset_root / row["shard"]

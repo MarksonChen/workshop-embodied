@@ -74,7 +74,11 @@ def export_prior(checkpoint_path: Path, output: Path, dataset_root: Path) -> dic
 
     # One honest anchor-4 example checks the convolution, Transformer, action
     # MLP, normalization, phase, and previous-action alignment together.
-    validation = load_split("validation", dataset_root)
+    validation = load_split(
+        "validation",
+        dataset_root,
+        expected_variant=checkpoint["dataset_variant"],
+    )
     raw_features = validation.features[0, :BUFFER_FRAMES]
     command = hindsight_command(
         validation.root_position[:1],

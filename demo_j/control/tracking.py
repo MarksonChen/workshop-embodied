@@ -9,8 +9,8 @@ from brax.envs.base import PipelineEnv, State
 
 from demo_f.jax_features import transition_feature
 from demo_f.kinematics import fetch_feet
-from demo_j.dataset import ReferenceSet
-from demo_j.fetch_mjx import (
+from demo_j.data.dataset import ReferenceSet
+from demo_j.data.physics import (
     foot_site_indices,
     joint_angles,
     joint_velocities,
@@ -29,7 +29,7 @@ LAST_TRACK_FRAME = 58
 
 
 class FetchTracking(PipelineEnv):
-    """Track feasible Demo F-derived state sequences without action labels."""
+    """Score closed-loop tracking of feasible Demo F-derived state sequences."""
 
     def __init__(
         self,
@@ -37,6 +37,7 @@ class FetchTracking(PipelineEnv):
         *,
         random_start: bool = True,
         reset_noise_scale: float = 0.0,
+        track_frames: int = LAST_TRACK_FRAME,
     ):
         super().__init__(sys=system(), backend="mjx", n_frames=4)
         # Keep provenance and session names on the host.  Only the arrays used
@@ -48,6 +49,12 @@ class FetchTracking(PipelineEnv):
         self._frames = references.frames
         self._random_start = bool(random_start)
         self._reset_noise_scale = float(reset_noise_scale)
+        self._last_track_frame = int(track_frames)
+        if not 1 <= self._last_track_frame < self._frames:
+            raise ValueError(
+                f"track_frames must lie in [1, {self._frames - 1}], "
+                f"got {self._last_track_frame}"
+            )
         self._foot_sites = jnp.asarray(foot_site_indices())
 
     @property
@@ -73,15 +80,15 @@ class FetchTracking(PipelineEnv):
             target_qpos[:, 3:7]
         )
         angle_target = jax.vmap(joint_angles)(target_qpos) - joint_angles(qpos)
-        velocity_target = jax.vmap(joint_velocities)(target_qvel) - joint_velocities(qvel)
+        velocity_target = jax.vmap(joint_velocities)(target_qvel) - joint_velocities(
+            qvel
+        )
         return jnp.concatenate(
             (root_target, quat_target, angle_target, velocity_target), axis=-1
         ).reshape(-1)
 
     def _observation(self, state, feature, previous_action, clip, frame):
-        reference = self._reference_observation(
-            state.qpos, state.qvel, clip, frame
-        )
+        reference = self._reference_observation(state.qpos, state.qvel, clip, frame)
         observation = jnp.concatenate((feature, previous_action, reference))
         if observation.shape != (OBS_DIM,):
             raise ValueError(observation.shape)
@@ -97,7 +104,9 @@ class FetchTracking(PipelineEnv):
         )
         qvel = self._qvel[clip, start]
         if self._reset_noise_scale:
-            qvel = qvel + self._reset_noise_scale * jax.random.normal(noise_rng, qvel.shape)
+            qvel = qvel + self._reset_noise_scale * jax.random.normal(
+                noise_rng, qvel.shape
+            )
         return self._reset_to(clip, start, qvel)
 
     def reset_to(self, clip: jax.Array, start: jax.Array = 0) -> State:
@@ -196,7 +205,7 @@ class FetchTracking(PipelineEnv):
         finite = jnp.all(jnp.isfinite(pipeline_state.qpos)) & jnp.all(
             jnp.isfinite(pipeline_state.qvel)
         )
-        completed = frame >= LAST_TRACK_FRAME
+        completed = frame >= self._last_track_frame
         failed = (
             (root_error > 1.0)
             | (root_angle > 120.0)
@@ -209,28 +218,32 @@ class FetchTracking(PipelineEnv):
         feature = self._feature(state.info["previous_qpos"], pipeline_state)
         obs = self._observation(pipeline_state, feature, action, clip, frame)
         metrics = dict(state.metrics)
-        metrics.update({
-            "tracking_reward": tracking_reward,
-            "root_error": root_error,
-            "root_angle_error_deg": root_angle,
-            "joint_error": angle_error,
-            "joint_velocity_error": velocity_error,
-            "foot_error": foot_error,
-            "control_cost": control_cost,
-            "control_difference_cost": difference_cost,
-            "current_frame": frame.astype(jnp.float32),
-            "completed": completed.astype(jnp.float32),
-        })
+        metrics.update(
+            {
+                "tracking_reward": tracking_reward,
+                "root_error": root_error,
+                "root_angle_error_deg": root_angle,
+                "joint_error": angle_error,
+                "joint_velocity_error": velocity_error,
+                "foot_error": foot_error,
+                "control_cost": control_cost,
+                "control_difference_cost": difference_cost,
+                "current_frame": frame.astype(jnp.float32),
+                "completed": completed.astype(jnp.float32),
+            }
+        )
         # Episode/Vmap/AutoReset wrappers append bookkeeping fields to these
         # dictionaries.  Preserve them so scan carries keep a fixed pytree.
         info = dict(state.info)
-        info.update({
-            "clip": clip,
-            "frame": frame,
-            "previous_qpos": pipeline_state.qpos,
-            "previous_action": action,
-            "feature": feature,
-        })
+        info.update(
+            {
+                "clip": clip,
+                "frame": frame,
+                "previous_qpos": pipeline_state.qpos,
+                "previous_action": action,
+                "feature": feature,
+            }
+        )
         return state.replace(
             pipeline_state=pipeline_state,
             obs=obs,

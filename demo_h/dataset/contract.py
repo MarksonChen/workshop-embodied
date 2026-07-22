@@ -11,6 +11,7 @@ from demo_h.config import ACTION_DIM, CLIP_FRAMES, STATE_DIM, TRANSITIONS
 SCHEMA_VERSION = "0.2.0"
 PARENT_VARIANT = "temporal-dilation-1p75-v1"
 DATASET_VARIANT = "exact-fetch-feedback-projection-retime-1p75-v1"
+CONTROLLER_DATASET_VARIANT = "demo-j-snn-controller-rollouts-v1"
 PARENT_ROOT = Path(
     os.environ.get(
         "DEMO_H_PARENT_ROOT",
@@ -24,6 +25,12 @@ DEFAULT_ROOT = Path(
     os.environ.get(
         "DEMO_H_DATASET_ROOT",
         Path(__file__).resolve().parent / "release_retime_1p75",
+    )
+)
+CONTROLLER_ROOT = Path(
+    os.environ.get(
+        "DEMO_H_CONTROLLER_DATASET_ROOT",
+        Path(__file__).resolve().parent / "release_snn_controller",
     )
 )
 

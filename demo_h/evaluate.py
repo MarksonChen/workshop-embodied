@@ -33,7 +33,7 @@ from demo_h.config import (
     OUT,
     TARGET_SPEED_FETCH,
 )
-from demo_h.dataset.contract import DEFAULT_ROOT
+from demo_h.dataset.contract import DATASET_VARIANT, DEFAULT_ROOT
 from demo_h.dataset.loader import load_split
 from demo_h.env import DemoHFetchRun
 from demo_h.policy import (
@@ -49,8 +49,13 @@ from demo_h.wrappers import BatchedPlanWrapper
 EVAL_SEEDS = (101, 211, 307, 401, 503)
 
 
-def reference_summary(dataset_root: Path) -> dict:
-    test = load_split("test", dataset_root)
+def reference_summary(
+    dataset_root: Path,
+    dataset_variant: str = DATASET_VARIANT,
+) -> dict:
+    test = load_split(
+        "test", dataset_root, expected_variant=dataset_variant
+    )
     statistics = gait_statistics(test.features[:, :64])
     return {
         name: {"mean": float(value.mean()), "std": float(value.std())}
@@ -287,12 +292,13 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--prior", type=Path, default=DEFAULT_PRIOR)
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--dataset-variant", default=DATASET_VARIANT)
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--seeds", type=int, nargs="+", default=EVAL_SEEDS)
     parser.add_argument("--output", type=Path, default=OUT / "policy_evaluation.json")
     args = parser.parse_args()
     prior = load_prior(args.prior)
-    reference = reference_summary(args.dataset_root)
+    reference = reference_summary(args.dataset_root, args.dataset_variant)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     _, initial, stream = rollout_arm(
         args.arm,

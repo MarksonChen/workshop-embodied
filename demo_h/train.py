@@ -43,6 +43,10 @@ def main() -> None:
     parser.add_argument("--speed-min", type=float, default=TASK_SPEED_MIN)
     parser.add_argument("--speed-max", type=float, default=TASK_SPEED_MAX)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--sweep-id",
+        help="Optional immutable experiment label embedded in the checkpoint",
+    )
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     timesteps = 2_000_000 if args.smoke else int(args.num_timesteps)
@@ -58,9 +62,7 @@ def main() -> None:
     )
     environment = FetchV2(inner)
     network_factory = functools.partial(make_residual_ppo_networks, prior=prior)
-    wrap_env_fn = functools.partial(
-        wrap_demo_h_for_training, prior=prior, beta=beta
-    )
+    wrap_env_fn = functools.partial(wrap_demo_h_for_training, prior=prior, beta=beta)
     # For H2, reference cross-entropy plus this entropy is exactly -mean KL.
     entropy_cost = 1e-2 if args.arm == "h1" else beta / ACTION_DIM
 
@@ -112,12 +114,25 @@ def main() -> None:
     )
     elapsed = time.time() - started
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    output = OUT / f"{args.arm}_seed{args.seed}_{stamp}.pkl"
+    beta_label = f"{beta:g}".replace(".", "p")
+    prefix = (
+        f"{args.sweep_id}_{args.arm}_beta{beta_label}" if args.sweep_id else args.arm
+    )
+    output = OUT / f"{prefix}_seed{args.seed}_{stamp}.pkl"
+    run_metadata = {
+        "sweep_id": args.sweep_id,
+        "beta": beta,
+        "seed": args.seed,
+        "num_timesteps": timesteps,
+        "num_envs": num_envs,
+        "task_speed_training_range": [args.speed_min, args.speed_max],
+    }
     checkpoint_metadata = save_policy_checkpoint(
         output,
         params,
         arm=args.arm,
         prior_path=args.prior,
+        run_metadata=run_metadata,
     )
     report = {
         "schema": "demo-h-ppo-training-v2",
@@ -133,6 +148,7 @@ def main() -> None:
             "analytic KL metrics for interpretation"
         ),
         "seed": args.seed,
+        "sweep_id": args.sweep_id,
         "num_timesteps": timesteps,
         "num_envs": num_envs,
         "training_seconds": elapsed,

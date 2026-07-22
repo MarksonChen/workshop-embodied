@@ -8,6 +8,7 @@ physics replay, not an ML reconstruction and not inverse dynamics.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import platform
@@ -22,9 +23,10 @@ import numpy as np
 
 from demo_f.features import trajectory_features
 from demo_f.kinematics import fetch_feet_numpy
-from demo_j.dataset import ReferenceSet, load_reference_set, take_references
-from demo_j.env import FetchTracking
-from demo_j.fetch_mjx import (
+from demo_j.artifacts import OUTPUT_ROOT, sha256
+from demo_j.data.dataset import ReferenceSet, load_reference_set, take_references
+from demo_j.control.tracking import FetchTracking
+from demo_j.data.physics import (
     XML_PATH,
     foot_site_indices,
     joint_qpos_addresses,
@@ -32,15 +34,7 @@ from demo_j.fetch_mjx import (
 
 
 SCHEMA = "demo-j-modern-mjx-replay-v1"
-DEFAULT_ROOT = Path(__file__).resolve().parent / "out" / "mjx_reference"
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
+DEFAULT_ROOT = OUTPUT_ROOT / "mjx_reference"
 
 
 def _combined_contract_hash(base_hash: str) -> str:
@@ -67,9 +61,7 @@ def project_reference(
     for start in range(0, reference.clips, batch_size):
         stop = min(start + batch_size, reference.clips)
         batch = take_references(reference, np.arange(start, stop))
-        state = initialize(
-            jnp.asarray(batch.qpos[:, 0]), jnp.asarray(batch.qvel[:, 0])
-        )
+        state = initialize(jnp.asarray(batch.qpos[:, 0]), jnp.asarray(batch.qvel[:, 0]))
         initial_qpos = state.qpos
         initial_qvel = state.qvel
         initial_contact = state.site_xpos[:, sites, 2] <= 0.025
@@ -153,7 +145,7 @@ def save_projected_reference(
         "split": reference.split,
         "clips": reference.clips,
         "archive": archive.name,
-        "archive_sha256": _sha256(archive),
+        "archive_sha256": sha256(archive),
         "contract_sha256": reference.manifest_sha256,
     }
 
@@ -176,7 +168,7 @@ def load_projected_reference(
     if row["contract_sha256"] != expected_contract:
         raise ValueError("base data/XML contract does not match cached projection")
     archive = root / row["archive"]
-    if _sha256(archive) != row["archive_sha256"]:
+    if sha256(archive) != row["archive_sha256"]:
         raise ValueError("projected archive hash mismatch")
     with np.load(archive) as values:
         qpos = np.asarray(values["qpos"], np.float32)
@@ -212,7 +204,7 @@ def build(root: Path = DEFAULT_ROOT, batch_size: int = 256) -> dict[str, object]
         "method": "deterministic open-loop replay; no learned reconstruction",
         "source": "Demo H accepted 1.75x projection and paired controls",
         "xml": str(XML_PATH),
-        "xml_sha256": _sha256(XML_PATH),
+        "xml_sha256": sha256(XML_PATH),
         "control_semantics": "u[t] produces saved state[t+1]",
         "runtime": {
             "python": platform.python_version(),
@@ -227,3 +219,15 @@ def build(root: Path = DEFAULT_ROOT, batch_size: int = 256) -> dict[str, object]
     root = Path(root)
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--batch-size", type=int, default=256)
+    args = parser.parse_args()
+    print(json.dumps(build(args.output_root, args.batch_size), indent=2))
+
+
+if __name__ == "__main__":
+    main()

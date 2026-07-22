@@ -2,9 +2,10 @@
 
 BrainPy's object transforms are useful for standalone simulations, whereas a
 Brax policy must pass parameters and recurrent state explicitly through JAX
-transforms.  This module therefore keeps the neuron state functional while
-using BrainPy's tested hard-forward/surrogate-backward spike primitive.  The
-same equations are used for PPO, inference, and recorded hard spike counts.
+transforms. This module therefore keeps the neuron state functional while
+using BrainPy's tested hard-forward/surrogate-backward spike primitive. The
+same equations are used for sequence training, inference, and recorded hard
+spike counts.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import brainpy.math as bm
 import jax
 import jax.numpy as jnp
 
-from demo_j.config import SNNConfig
+from demo_j.control.config import SNNConfig
 
 
 Array = jax.Array
@@ -162,4 +163,3 @@ def sequence(
         return control_step(params, carry, value, config)
 
     return jax.lax.scan(body, state, inputs)
-

@@ -103,6 +103,30 @@ saturation is 1.36%, minimum torso height is 1.133, and minimum uprightness is
 0.514. Replaying paired controls recovers saved trajectories to approximately
 `1e-5` on the same CUDA backend; shuffled controls are materially worse.
 
+### Discarded controller-generated dataset audit
+
+`demo_h.dataset.controller_rollouts` can reproduce a separate prior-training arm
+from the state/action trajectories actually produced by Demo J's successful
+SNN imitation controller. It never overwrites the accepted release. Seeds 0
+and 2 generate train/validation data, while neural-benchmark seed 1 is
+test-only. Pass the experimental variant explicitly to the loader-facing
+commands:
+
+```bash
+uv run python -m demo_h.train_prior \
+  --dataset-root demo_h/dataset/release_snn_controller \
+  --dataset-variant demo-j-snn-controller-rollouts-v1 \
+  --output demo_h/out/prior_snn_controller.pt
+```
+
+The result passed the held-out prior gates but gave essentially the same beta
+conclusion, so the substitution was reverted. The accepted defaults still point
+to `release_retime_1p75`; this release is retained only for provenance. Its
+motion distribution is slower than the 1.5–4.0 task range and is generated in
+modern MJX while PPO still deploys in legacy Brax. See
+[`dataset/CONTROLLER_DATASET_CARD.md`](dataset/CONTROLLER_DATASET_CARD.md) and
+Demo J's results for the bounded experiment and its negative caveats.
+
 ## Train and validate the frozen prior
 
 ```bash

@@ -53,4 +53,3 @@ class SNNConfig:
     def as_dict(self) -> dict[str, int | float]:
         self.validate()
         return asdict(self)
-

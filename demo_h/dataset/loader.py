@@ -32,7 +32,11 @@ class BodyActionSet:
     source_path_speed_mps: np.ndarray
     sessions: tuple[str, ...]
 
-def load_manifest(root: Path = DEFAULT_ROOT) -> dict:
+def load_manifest(
+    root: Path = DEFAULT_ROOT,
+    *,
+    expected_variant: str = DATASET_VARIANT,
+) -> dict:
     path = Path(root) / "manifest.json"
     if not path.is_file():
         raise FileNotFoundError(
@@ -45,8 +49,11 @@ def load_manifest(root: Path = DEFAULT_ROOT) -> dict:
         )
     if not manifest.get("complete_release", False):
         raise ValueError("prior training requires a complete Demo H release")
-    if manifest.get("variant") != DATASET_VARIANT:
-        raise ValueError(f"unexpected Demo H dataset variant {manifest.get('variant')!r}")
+    if manifest.get("variant") != expected_variant:
+        raise ValueError(
+            f"unexpected Demo H dataset variant {manifest.get('variant')!r}; "
+            f"expected {expected_variant!r}"
+        )
     if manifest.get("fields") != {name: list(shape) for name, shape in FIELDS.items()}:
         raise ValueError("Demo H manifest fields differ from the frozen contract")
     if manifest.get("dtypes") != DTYPES:
@@ -62,9 +69,14 @@ def load_manifest(root: Path = DEFAULT_ROOT) -> dict:
     return manifest
 
 
-def load_split(split: str, root: Path = DEFAULT_ROOT) -> BodyActionSet:
+def load_split(
+    split: str,
+    root: Path = DEFAULT_ROOT,
+    *,
+    expected_variant: str = DATASET_VARIANT,
+) -> BodyActionSet:
     root = Path(root)
-    manifest = load_manifest(root)
+    manifest = load_manifest(root, expected_variant=expected_variant)
     rows = [row for row in manifest["sessions"] if row["split"] == split]
     if not rows:
         raise ValueError(f"release has no {split!r} split")

@@ -36,6 +36,31 @@ def test_checkpoint_envelope_binds_arm_prior_and_layout(tmp_path):
         )
 
 
+def test_checkpoint_round_trips_training_metadata(tmp_path):
+    prior = tmp_path / "prior.npz"
+    prior.write_bytes(b"prior")
+    checkpoint = tmp_path / "policy.pkl"
+    training = {
+        "sweep_id": "comparison-v1",
+        "beta": 0.1,
+        "seed": 2,
+        "num_timesteps": 30_000_000,
+    }
+    metadata = save_policy_checkpoint(
+        checkpoint,
+        {"weights": [1, 2]},
+        arm="h2",
+        prior_path=prior,
+        run_metadata=training,
+    )
+    _, loaded = load_policy_checkpoint(
+        checkpoint,
+        expected_arm="h2",
+        expected_prior_sha256=metadata["prior_sha256"],
+    )
+    assert loaded["training"] == training
+
+
 def test_online_prior_layout_fails_closed():
     PriorConfig().validate_online_contract()
     with pytest.raises(ValueError, match="online contract"):

@@ -4,10 +4,16 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-brainpy = pytest.importorskip("brainpy")
+pytest.importorskip("brainpy")
 
-from demo_j.config import SNNConfig
-from demo_j.snn import control_step, init_params, initial_state, reset_where, sequence
+from demo_j.control.config import SNNConfig  # noqa: E402
+from demo_j.control.snn import (  # noqa: E402
+    control_step,
+    init_params,
+    initial_state,
+    reset_where,
+    sequence,
+)
 
 
 def test_control_step_emits_integer_20ms_counts() -> None:

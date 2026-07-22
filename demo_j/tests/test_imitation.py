@@ -3,9 +3,9 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
-from demo_j.dataset import load_reference_set, take_references
-from demo_j.env import ACTION_DIM, FEATURE_DIM, FetchTracking
-from demo_j.imitation import teacher_forced_sequences
+from demo_j.data.dataset import load_reference_set, take_references
+from demo_j.control.tracking import ACTION_DIM, FEATURE_DIM, FetchTracking
+from demo_j.control.imitation import teacher_forced_sequences
 
 
 def test_teacher_forcing_matches_environment_reference_observation() -> None:
@@ -23,6 +23,4 @@ def test_teacher_forcing_matches_environment_reference_observation() -> None:
         np.asarray(tail),
         atol=2e-6,
     )
-    np.testing.assert_array_equal(
-        sequences.action[0], reference.teacher_action[0, :2]
-    )
+    np.testing.assert_array_equal(sequences.action[0], reference.teacher_action[0, :2])

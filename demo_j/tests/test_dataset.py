@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from demo_j.dataset import (
+from demo_j.data.dataset import (
     ReferenceSet,
     ROUNDED_SOURCE_OFFSET,
     TARGET_CROP_START,

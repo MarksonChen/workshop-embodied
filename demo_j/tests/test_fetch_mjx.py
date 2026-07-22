@@ -5,7 +5,7 @@ import numpy as np
 
 from demo_f.config import JOINT_NAMES
 from demo_f.kinematics import fetch_feet_numpy
-from demo_j.fetch_mjx import FOOT_SITE_NAMES, XML_PATH, host_model, validate_contract
+from demo_j.data.physics import FOOT_SITE_NAMES, XML_PATH, host_model, validate_contract
 
 
 def test_mjcf_matches_demo_f_kinematics() -> None:
@@ -19,14 +19,10 @@ def test_mjcf_matches_demo_f_kinematics() -> None:
             joint = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
             data.qpos[model.jnt_qposadr[joint]] = value
         mujoco.mj_forward(model, data)
-        torso = data.xpos[
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "Torso")
-        ]
+        torso = data.xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "Torso")]
         feet = np.asarray(
             [
-                data.site_xpos[
-                    mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)
-                ]
+                data.site_xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)]
                 - torso
                 for name in FOOT_SITE_NAMES
             ]

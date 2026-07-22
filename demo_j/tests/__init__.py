@@ -1,2 +1,1 @@
 """Demo J tests."""
-

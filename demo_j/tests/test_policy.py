@@ -3,10 +3,10 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from demo_j.config import SNNConfig
-from demo_j.env import OBS_DIM
-from demo_j.policy import encode_observation, init_policy, policy_sequence
-from demo_j.snn import initial_state
+from demo_j.control.config import SNNConfig
+from demo_j.control.tracking import OBS_DIM
+from demo_j.control.policy import encode_observation, init_policy, policy_sequence
+from demo_j.control.snn import initial_state
 
 
 def test_policy_shapes_and_bounded_means() -> None:

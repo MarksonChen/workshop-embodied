@@ -68,11 +68,12 @@ def load_models(path: Path):
 @torch.inference_mode()
 def evaluate(checkpoint_path: Path, dataset_root: Path, split: str) -> dict:
     checkpoint, config, tokenizer, predictor, decoder = load_models(checkpoint_path)
-    load_manifest(dataset_root)
+    dataset_variant = checkpoint["dataset_variant"]
+    load_manifest(dataset_root, expected_variant=dataset_variant)
     manifest_hash = sha256(Path(dataset_root) / "manifest.json")
     if checkpoint["dataset_manifest_sha256"] != manifest_hash:
         raise ValueError("checkpoint was not trained from this dataset manifest")
-    dataset = load_split(split, dataset_root)
+    dataset = load_split(split, dataset_root, expected_variant=dataset_variant)
     feature_mean = torch.as_tensor(checkpoint["feature_mean"], device=DEVICE)
     feature_std = torch.as_tensor(checkpoint["feature_std"], device=DEVICE)
     features = (torch.as_tensor(dataset.features, device=DEVICE) - feature_mean) / feature_std

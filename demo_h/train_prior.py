@@ -20,7 +20,7 @@ from demo_f.models import ConditionalTransformer, MotionAutoencoder
 from demo_f.losses import joint_limit_loss
 from demo_f.windows import encode_in_batches
 from demo_h.config import ACTION_PHASES, OUT, PriorConfig
-from demo_h.dataset.contract import DEFAULT_ROOT
+from demo_h.dataset.contract import DATASET_VARIANT, DEFAULT_ROOT
 from demo_h.dataset.loader import load_manifest, load_split
 from demo_h.models import FeedbackActionDecoder, pre_tanh, tanh_gaussian_nll
 from demo_h.windows import StateActionWindows, state_action_windows
@@ -208,6 +208,7 @@ def _closed_loop_action_metrics(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--dataset-variant", default=DATASET_VARIANT)
     parser.add_argument(
         "--output", type=Path, default=OUT / "prior_retime_1p75.pt"
     )
@@ -223,9 +224,15 @@ def main() -> None:
         action_steps=20 if args.smoke else args.action_steps,
     )
     seed_everything(args.seed)
-    manifest = load_manifest(args.dataset_root)
-    train = load_split("train", args.dataset_root)
-    validation = load_split("validation", args.dataset_root)
+    manifest = load_manifest(
+        args.dataset_root, expected_variant=args.dataset_variant
+    )
+    train = load_split(
+        "train", args.dataset_root, expected_variant=args.dataset_variant
+    )
+    validation = load_split(
+        "validation", args.dataset_root, expected_variant=args.dataset_variant
+    )
     print(
         f"Demo H data train={len(train.features):,} validation={len(validation.features):,} "
         f"device={DEVICE}",
