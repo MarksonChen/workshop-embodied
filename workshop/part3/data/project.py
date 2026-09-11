@@ -444,23 +444,14 @@ def project_release(
             "velocity_gain": PD_VELOCITY_GAIN,
             "requested_axis_torque_sign": -TORQUE_STRENGTH,
             "code_sha256": {
-                "part2/core/commands.py": sha256(
+                "part2/core/motion.py": sha256(
                     Path(__file__).resolve().parents[2]
                     / "part2"
                     / "core"
-                    / "commands.py"
+                    / "motion.py"
                 ),
-                "part2/core/features.py": sha256(
-                    Path(__file__).resolve().parents[2]
-                    / "part2"
-                    / "core"
-                    / "features.py"
-                ),
-                "part2/core/jax_features.py": sha256(
-                    Path(__file__).resolve().parents[2]
-                    / "part2"
-                    / "core"
-                    / "jax_features.py"
+                "part2/config.py": sha256(
+                    Path(__file__).resolve().parents[2] / "part2" / "config.py"
                 ),
                 "part3/config.py": sha256(
                     Path(__file__).resolve().parents[1] / "config.py"

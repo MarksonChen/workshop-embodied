@@ -67,13 +67,16 @@ PPO repeatedly performs four operations:
    unhelpful actions.
 4. Clip large policy changes so one noisy batch cannot destroy the controller.
 
-Train the policy in the pinned legacy-Brax runtime:
+Train the policy in the pinned legacy-Brax runtime. `mujoco-mjx` and `mujoco` are pinned
+too: releases after the 3.3 line import jax APIs that jax 0.4.30 does not have.
 
 ```bash
 env -u LD_LIBRARY_PATH uv run --no-project --isolated \
   --with 'brax==0.12.3' \
   --with 'jax[cuda12]==0.4.30' \
   --with 'jaxlib==0.4.30' \
+  --with 'mujoco-mjx==3.3.7' \
+  --with 'mujoco==3.3.7' \
   python -m workshop.part1.train
 ```
 
@@ -85,6 +88,8 @@ env -u LD_LIBRARY_PATH uv run --no-project --isolated \
   --with 'brax==0.12.3' \
   --with 'jax[cuda12]==0.4.30' \
   --with 'jaxlib==0.4.30' \
+  --with 'mujoco-mjx==3.3.7' \
+  --with 'mujoco==3.3.7' \
   --with 'imageio>=2.37' \
   --with 'imageio-ffmpeg>=0.6' \
   python -m workshop.part1.visualize \
@@ -145,6 +150,8 @@ env -u LD_LIBRARY_PATH uv run --no-project --isolated \
   --with 'brax==0.12.3' \
   --with 'jax==0.4.30' \
   --with 'jaxlib==0.4.30' \
+  --with 'mujoco-mjx==3.3.7' \
+  --with 'mujoco==3.3.7' \
   --with 'imageio>=2.37' \
   --with 'imageio-ffmpeg>=0.6' \
   --with 'pillow>=11' \
@@ -211,6 +218,8 @@ env -u LD_LIBRARY_PATH uv run --no-project --isolated \
   --with 'brax==0.12.3' \
   --with 'jax[cuda12]==0.4.30' \
   --with 'jaxlib==0.4.30' \
+  --with 'mujoco-mjx==3.3.7' \
+  --with 'mujoco==3.3.7' \
   --with 'scipy>=1.15' \
   python -m workshop.part3.train --beta 0.10
 ```
@@ -223,6 +232,8 @@ env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu \
   --with 'brax==0.12.3' \
   --with 'jax==0.4.30' \
   --with 'jaxlib==0.4.30' \
+  --with 'mujoco-mjx==3.3.7' \
+  --with 'mujoco==3.3.7' \
   --with 'scipy>=1.15' \
   python -m workshop.part3.visualize \
   --checkpoint workshop/part3/out/POLICY.pkl
@@ -232,6 +243,8 @@ env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu \
   --with 'brax==0.12.3' \
   --with 'jax==0.4.30' \
   --with 'jaxlib==0.4.30' \
+  --with 'mujoco-mjx==3.3.7' \
+  --with 'mujoco==3.3.7' \
   --with 'scipy>=1.15' \
   --with 'imageio>=2.37' \
   --with 'imageio-ffmpeg>=0.6' \
@@ -271,6 +284,8 @@ env -u LD_LIBRARY_PATH uv run --no-project --isolated \
   --with 'brax==0.12.3' \
   --with 'jax[cuda12]==0.4.30' \
   --with 'jaxlib==0.4.30' \
+  --with 'mujoco-mjx==3.3.7' \
+  --with 'mujoco==3.3.7' \
   --with 'scipy>=1.15' \
   python -m workshop.part3.data.project
 ```

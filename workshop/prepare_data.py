@@ -342,11 +342,11 @@ def build(
             "script": "workshop/prepare_data.py",
             "script_sha256": sha256(Path(__file__)),
             "shared_code_sha256": {
-                "part2/core/commands.py": sha256(
-                    Path(__file__).parent / "part2" / "core" / "commands.py"
+                "part2/core/motion.py": sha256(
+                    Path(__file__).parent / "part2" / "core" / "motion.py"
                 ),
-                "part2/core/kinematics.py": sha256(
-                    Path(__file__).parent / "part2" / "core" / "kinematics.py"
+                "part2/config.py": sha256(
+                    Path(__file__).parent / "part2" / "config.py"
                 ),
             },
             "continuity": "each output crop comes from exactly one contiguous parent clip",
